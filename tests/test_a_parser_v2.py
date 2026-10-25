@@ -6,7 +6,7 @@ from bench import parser
 from bench.serial_owner import LineSplitter
 
 REG = ("LW DUMP reg r0=0x0000002a r1=0x20001f00 r2=0x00000000 r3=0xdeadbeef "
-       "r12=0x00000007 lr=0x08001235 pc=0x08004c1e psr=0x61000000")
+       "r12=0x00000007 lr=0x08001235 pc=0x08004c1e psr=0x2000001f")
 
 
 class HealthV2Test(unittest.TestCase):

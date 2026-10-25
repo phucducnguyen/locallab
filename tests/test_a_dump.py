@@ -8,11 +8,10 @@ from bench.dump import DumpCollector
 REG = ("LW DUMP reg r0=0x00000005 r1=0x00000006 r2=0x20000100 r3=0x00000000 "
        "r12=0x0000ffff lr=0xfffffff9 pc=0x080023a4 psr=0x21000003")
 S1 = "LW DUMP stack 0x2001ff80 0x0000000a 0x0000000b 0x0000000c 0x0000000d"
-S2 = "LW DUMP stack 0x2001ff90 0x0800aaaa 0x0800bbbb 0x00000000 0x01000000"
+S2 = "LW DUMP stack 0x2001ff90 0x0800aaaa 0x0800bbbb 0x00000000 0x00c0ffee"
 CAUSE = "LW DUMP cause FORCED UNDEFINSTR"
 END = "LW DUMP end"
-HF = ("LW HARDFAULT pc=0x080023a4 lr=0xfffffff9 psr=0x21000003 cfsr=0x00010000 "
-      "hfsr=0x40000000 bfar=0x00000000 mmfar=0x00000000 sp=0x2001ff80")
+HF = "LW HARDFAULT pc=0x080023a4 sp=0x2001ff80"
 BOOT = "LW BOOT fw=c0ffee1 reset=PIN csr=0x04000000"
 
 
@@ -43,7 +42,7 @@ class DumpCollectorTest(unittest.TestCase):
         self.assertEqual(d["stack"], [("0x2001ff80", ["0x0000000a", "0x0000000b",
                                                       "0x0000000c", "0x0000000d"]),
                                       ("0x2001ff90", ["0x0800aaaa", "0x0800bbbb",
-                                                      "0x00000000", "0x01000000"])])
+                                                      "0x00000000", "0x00c0ffee"])])
         self.assertIsNone(d["stack_bad_sp"])
         self.assertEqual(d["cause_names"], ["FORCED", "UNDEFINSTR"])
         self.assertEqual(len(d["cites"]), 5)
