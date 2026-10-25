@@ -77,7 +77,8 @@ class StateTest(Base):
         self.assertEqual(st["vdd"], 3.301)
         self.assertFalse(st["vdd_low"])
         self.assertEqual(st["temp"], 31.5)
-        self.assertIn("no internet", st["footer"])
+        self.assertIn("No cloud AI calls", st["footer"])
+        self.assertNotIn("0 bytes", st["footer"])
 
     def test_faults_from_parsed_keys(self):
         conn = self.stub()

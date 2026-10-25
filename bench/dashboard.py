@@ -11,6 +11,8 @@ on error); this server never writes it. It binds 127.0.0.1 by default and has no
 
 import argparse
 import http.server
+import subprocess
+import urllib.request
 import json
 import os
 import re
@@ -20,11 +22,19 @@ import sys
 import threading
 import time
 
+from agent.check_citations import (BIT_RE, BRACKET_RE, DIFF_RE, FILE_LINE_RE, INCIDENT_RE,
+                                   SERIAL_RE)
+from agent.explain import parse_diagnosis
+from bench.alerts import UNAVAILABLE
 from bench.status_data import (VDD_MIN_MV, Db, clean, loads, parse_health)
+from bench.triage import ROUTES
 
 PAGE_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "dashboard_page.html")
-FOOTER = "Everything runs on this NVIDIA GB10 \u2014 no internet. Model: Qwen3.6-35B-A3B."
+MODEL = "Qwen3.6-35B-A3B"
+METRICS_URL = "http://127.0.0.1:8000/metrics"
 STALE_S = 5.0
+AI_LATE_S = 180.0      # no explain alert this long after the open alert: stop "analysing"
+MAX_CITES = 4
 
 # name -> (header pins, MCU pins, input pin on CN8 or None)
 DEVICES = {
@@ -163,11 +173,240 @@ def _since(t, t0):
     return round(t - t0, 1) if t is not None and t0 is not None else None
 
 
+# ---------- the AI at work: live GB10 numbers, the agent's answer, rule vs AI ----------
+
+def metrics_url():
+    return os.environ.get("LW_VLLM_METRICS") or METRICS_URL
+
+
+def endpoint_of(url):
+    """'http://127.0.0.1:8000/metrics' -> '127.0.0.1:8000' (shown on the badge)."""
+    m = re.match(r"^[a-z]+://([^/]+)", url or "")
+    return clean(m.group(1), 60) if m else "127.0.0.1:8000"
+
+
+def badge(url=None):
+    return ("AI inference: 100%% on this GB10 (%s) · No cloud AI calls · "
+            "Only outbound traffic: Telegram alerts" % endpoint_of(url or metrics_url()))
+
+
+_TOKENS_RE = re.compile(r"^vllm:generation_tokens_total(?:\{[^}]*\})?\s+(\S+)")
+
+
+def generation_tokens(text):
+    """The sum of every vllm:generation_tokens_total series in a Prometheus text; None if absent."""
+    total, seen = 0.0, False
+    for line in (text or "").splitlines():
+        m = _TOKENS_RE.match(line.strip())
+        if not m:
+            continue
+        try:
+            v = float(m.group(1))
+        except ValueError:
+            continue
+        if v == v and v not in (float("inf"), float("-inf")):
+            total += v
+            seen = True
+    return total if seen else None
+
+
+def parse_gpu(text):
+    """(util %, power W) from nvidia-smi's 'util, power' csv line; None for a missing value."""
+    line = next((ln for ln in (text or "").splitlines() if ln.strip()), "")
+    parts = [p.strip() for p in line.split(",")]
+
+    def num(i):
+        try:
+            return round(float(parts[i]), 1)
+        except (IndexError, ValueError):
+            return None
+    return num(0), num(1)
+
+
+class Probe:
+    """Box-wide GB10 numbers, polled at most once a second in one background thread.
+
+    nvidia-smi (command from $LW_NVIDIA_SMI, 2 s timeout) for GPU use and power, and vLLM's
+    Prometheus counter vllm:generation_tokens_total (URL from $LW_VLLM_METRICS) for tokens/s.
+    Read-only: it runs one query command and makes one local GET per poll.
+    """
+
+    def __init__(self, nvidia_smi=None, url=None, interval=1.0, timeout=2.0):
+        self.cmd = nvidia_smi or os.environ.get("LW_NVIDIA_SMI") or "nvidia-smi"
+        self.url = url or metrics_url()
+        self.interval = interval
+        self.timeout = timeout
+        self.lock = threading.Lock()
+        self.data = {"gpu_util": None, "power_w": None, "tok_s": None, "tokens": None,
+                     "t": None}
+        self._prev = None  # (t, tokens)
+        self._stop = threading.Event()
+        self._thread = None
+
+    def _gpu(self):
+        try:
+            p = subprocess.run([self.cmd, "--query-gpu=utilization.gpu,power.draw",
+                                "--format=csv,noheader,nounits"], stdin=subprocess.DEVNULL,
+                               stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
+                               timeout=self.timeout)
+        except (OSError, subprocess.SubprocessError):
+            return None, None
+        if p.returncode != 0:
+            return None, None
+        return parse_gpu(p.stdout.decode("ascii", "replace"))
+
+    def _tokens(self):
+        try:
+            with urllib.request.urlopen(self.url, timeout=self.timeout) as r:
+                return generation_tokens(r.read(1 << 20).decode("utf-8", "replace"))
+        except (OSError, ValueError):
+            return None
+
+    def poll_once(self, now=None):
+        util, power = self._gpu()
+        tokens = self._tokens()
+        now = time.time() if now is None else now
+        rate = None
+        if tokens is not None and self._prev is not None and now > self._prev[0]:
+            d = tokens - self._prev[1]
+            rate = round(max(0.0, d) / (now - self._prev[0]), 1)  # a reset reads as 0
+        self._prev = (now, tokens) if tokens is not None else None
+        with self.lock:
+            self.data = {"gpu_util": util, "power_w": power, "tok_s": rate,
+                         "tokens": int(tokens) if tokens is not None else None, "t": now}
+        return self.snapshot()
+
+    def snapshot(self):
+        with self.lock:
+            return dict(self.data)
+
+    def start(self):
+        if self._thread is None:
+            self._thread = threading.Thread(target=self._loop, name="gb10-probe", daemon=True)
+            self._thread.start()
+        return self
+
+    def _loop(self):
+        while not self._stop.is_set():
+            t = time.monotonic()
+            try:
+                self.poll_once()
+            except Exception:  # never let the probe take the screen down
+                pass
+            self._stop.wait(max(0.0, self.interval - (time.monotonic() - t)))
+
+    def stop(self):
+        self._stop.set()
+        if self._thread is not None:
+            self._thread.join(timeout=self.timeout + 1.0)
+            self._thread = None
+
+
+def _demark(line):
+    return " ".join(line.replace("**", "").replace("`", "").split())
+
+
+def find_diagnosis(*texts):
+    """The parsed DIAGNOSIS line (agent.explain's exact format), newest line first; or None."""
+    for text in texts:
+        if not isinstance(text, str):
+            continue
+        for line in reversed(text.splitlines()):
+            if "DIAGNOSIS" in line:
+                d = parse_diagnosis(_demark(line))
+                if d:
+                    return d
+    return None
+
+
+_HEAD_RE = re.compile(r"^(#+\s|LOCAL LAB\b|Incident:|Next:|DIAGNOSIS\b)")
+_SENT_RE = re.compile(r"(?<=[.!?])\s+")
+
+
+def answer_text(text, n=2):
+    """The first one or two plain sentences of the agent's answer, citations dropped."""
+    if not isinstance(text, str):
+        return None
+    body = []
+    for line in text.splitlines():
+        line = _demark(line)
+        if not line or line == "..." or _HEAD_RE.match(line):
+            if body:
+                break
+            continue
+        line = re.sub(r"^[^\w#]*#\d+\s*:\s*", "", line)  # the Telegram "🧠 #5: " head
+        line = re.sub(r"^(EXPLANATION|SUMMARY|LIKELY CAUSE|CAUSE)\s*:\s*", "", line, flags=re.I)
+        if line.endswith(":") and len(line) < 40:  # a section heading
+            continue
+        body.append(line)
+    s = re.sub(r"\s*\[[^\[\]]*\]", "", " ".join(body)).strip()
+    if not s:
+        return None
+    parts = [p for p in _SENT_RE.split(s) if p]
+    return clean(" ".join(parts[:n]), 320) or None
+
+
+def parse_citations(text, limit=MAX_CITES):
+    """Up to `limit` distinct citations in agent.check_citations' five exact forms."""
+    out, seen = [], set()
+    if not isinstance(text, str):
+        return out
+    for m in BRACKET_RE.finditer(text):
+        for part in m.group(1).split(";"):
+            part = part.strip()
+            c = None
+            mm = SERIAL_RE.fullmatch(part)
+            if mm:
+                c = {"kind": "serial", "ref": mm.group(1)}
+            elif DIFF_RE.fullmatch(part):
+                mm = DIFF_RE.fullmatch(part)
+                c = {"kind": "diff", "ref": "%s +%s" % (mm.group(1), mm.group(2))}
+            elif INCIDENT_RE.fullmatch(part):
+                c = {"kind": "incident", "ref": INCIDENT_RE.fullmatch(part).group(1)}
+            elif FILE_LINE_RE.fullmatch(part):
+                c = {"kind": "file", "ref": part}
+            elif BIT_RE.fullmatch(part):
+                c = {"kind": "bit", "ref": part}
+            if c is None or part in seen:
+                continue
+            seen.add(part)
+            c["text"] = clean(part, 80)
+            c["ref"] = clean(c["ref"], 80)
+            out.append(c)
+            if len(out) >= limit:
+                return out
+    return out
+
+
+def rule_vs_ai(triage, route, diag, have_explain):
+    """{rule, rule_route, ai, cause, status, verdict} for the newest incident."""
+    out = {"rule": triage, "rule_route": route or ROUTES.get(triage) or None,
+           "ai": None, "cause": None, "status": "working", "verdict": None}
+    if diag:
+        out.update(ai=diag["diagnosis"], cause=clean(diag["cause"], 40), status="ok",
+                   verdict="agrees" if diag["diagnosis"] == triage else "differs")
+    elif have_explain:
+        out["status"] = "none"
+    return out
+
+
 class Dashboard:
-    def __init__(self, path, board=None):
+    def __init__(self, path, board=None, probe=None):
         self.db = Db(path)
         self.board = board
         self.lock = threading.Lock()
+        self.probe = probe
+        self.badge = badge(probe.url if probe else None)
+        self._tok = {}  # incident id -> [token counter at first pending sight, frozen count]
+
+    def live(self):
+        d = self.probe.snapshot() if self.probe else {}
+        return {"gpu_util": d.get("gpu_util"), "power_w": d.get("power_w"),
+                "tok_s": d.get("tok_s"), "tokens": d.get("tokens"), "t": d.get("t")}
+
+    def ai_idle(self):
+        return {"model": MODEL, "badge": self.badge, "live": self.live(), "phase": "idle",
+                "incident": None}
 
     def state(self):
         with self.lock:
@@ -178,7 +417,7 @@ class Dashboard:
                 return {"error": "DB: %s" % clean(str(e), 200), "now": time.time(),
                         "devices": {}, "banner": {"level": "unknown", "text": "NO DATA"},
                         "headline": {"level": "unknown", "text": WAIT_HEAD, "sub": ""},
-                        "stale": True, "footer": FOOTER}
+                        "stale": True, "footer": self.badge, "ai": self.ai_idle()}
 
     def _health(self):
         if self.board:
@@ -191,7 +430,8 @@ class Dashboard:
 
     def _state(self):
         snap = self.db.read()
-        st = {"error": snap["error"], "now": time.time(), "footer": FOOTER}
+        st = {"error": snap["error"], "now": time.time(), "footer": self.badge,
+              "ai": self.ai_idle()}
         if snap["error"]:
             st.update(devices={}, banner={"level": "unknown", "text": "NO DATA"},
                       headline={"level": "unknown", "text": WAIT_HEAD, "sub": ""}, stale=True)
@@ -287,9 +527,63 @@ class Dashboard:
                 e = loads(newest.get("evidence")).get("explanation")
                 ex = first_sentence(e) if isinstance(e, str) else None
             st["stopwatch"]["explain"] = ex
+            st["ai"] = self._ai(newest, alerts, st["now"])
         else:
             st["stopwatch"] = None
         return st
+
+    def _ai(self, inc, alerts, now):
+        """The "ai" block for the newest incident: pending / explained / unavailable."""
+        ai = self.ai_idle()
+        live = ai["live"]
+        iid = inc["id"]
+        t_open = inc.get("t_alert_sent") or _sent(alerts, "open")
+        exp = [a for a in alerts if a.get("transition") == "explain"]
+        ev = loads(inc.get("evidence"))
+        full = ev.get("explanation") if isinstance(ev.get("explanation"), str) else None
+        alert_text = exp[-1].get("text") if exp else None
+        alert_text = alert_text if isinstance(alert_text, str) else None
+        t_exp = (exp[-1].get("sent") or exp[-1].get("created")) if exp else None
+        ai.update(incident=iid, t_alert=t_open, elapsed_s=None, explain_s=None, answer=None,
+                  tokens_run=None, citations=[])
+        unavailable = bool(exp) and not full and (alert_text is None or UNAVAILABLE in alert_text)
+        if not exp:
+            if t_open is None:
+                ai["phase"] = "idle"  # no alert sent yet: nothing for the AI to do
+            elif now - t_open > AI_LATE_S:
+                ai["phase"] = "late"
+            else:
+                ai["phase"] = "pending"
+                ai["elapsed_s"] = round(max(0.0, now - t_open), 1)
+        else:
+            ai["phase"] = "unavailable" if unavailable else "done"
+            ai["explain_s"] = _since(t_exp, t_open)
+            if not unavailable:
+                ai["answer"] = answer_text(alert_text) or answer_text(full)
+        tok = live.get("tokens")
+        rec = self._tok.get(iid)
+        if ai["phase"] == "pending" and tok is not None:
+            if rec is None or tok < rec[0]:
+                rec = self._tok[iid] = [tok, None]
+            rec[1] = tok - rec[0]
+        if rec is not None:
+            ai["tokens_run"] = rec[1]
+        if len(self._tok) > 20:
+            for k in sorted(self._tok)[:-20]:
+                del self._tok[k]
+        diag = find_diagnosis(full, alert_text)
+        ai["rule"] = rule_vs_ai(inc.get("triage"), inc.get("route"), diag, bool(exp))
+        if unavailable:
+            ai["rule"]["status"] = "none"
+        cites = parse_citations(full) or parse_citations(alert_text)
+        for c in cites:
+            if c["kind"] == "serial":
+                rows = self.db.query("SELECT fields FROM events WHERE raw_ts=? ORDER BY id DESC "
+                                     "LIMIT 1", (c["ref"],))
+                line = loads(rows[0]["fields"]).get("line") if rows else None
+                c["line"] = clean(line, 160) if isinstance(line, str) else None
+        ai["citations"] = cites
+        return ai
 
     def _quiet_headline(self, bad, devices, board, stale):
         if stale:
@@ -387,9 +681,17 @@ class Server(socketserver.ThreadingMixIn, http.server.HTTPServer):
         self.page = load_page()
         super().__init__(addr, Handler)
 
+    def server_close(self):
+        if self.dash.probe is not None:
+            self.dash.probe.stop()
+        super().server_close()
 
-def make_server(db, host="127.0.0.1", port=8770, board=None):
-    return Server((host, port), Dashboard(db, board))
+
+def make_server(db, host="127.0.0.1", port=8770, board=None, probe=None):
+    """The dashboard server; it starts its GB10 probe thread (pass probe=False for none)."""
+    if probe is None:
+        probe = Probe().start()
+    return Server((host, port), Dashboard(db, board, probe or None))
 
 
 def main(argv=None):
