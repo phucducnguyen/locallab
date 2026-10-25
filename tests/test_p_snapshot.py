@@ -249,6 +249,23 @@ class TestSettleProxy(unittest.TestCase):
         img = urllib.request.urlopen(p.url + "__lw_settle.png").read()
         self.assertTrue(img.startswith(b"\x89PNG"))
 
+    def test_rejects_other_hosts_schemes_and_dotdot(self):
+        import http.client
+        p = snapshot.SettleProxy("http://127.0.0.1:9/", settle=0)
+        self.addCleanup(p.close)
+        port = p.srv.server_address[1]
+        self.assertEqual(p.srv.server_address[0], "127.0.0.1")
+        for target in ("//127.0.0.2/x", "http://other/", "file:///etc/passwd",
+                       "/../etc/passwd", "/state.json/../x", "/etc/passwd"):
+            c = http.client.HTTPConnection("127.0.0.1", port, timeout=5)
+            c.request("GET", target)
+            r = c.getresponse()
+            r.read()
+            c.close()
+            self.assertIn(r.status, (400, 404), target)
+        with self.assertRaises(ValueError):
+            snapshot.SettleProxy("file:///etc/passwd")
+
 
 class TestCaption(unittest.TestCase):
     def cap(self, kind, ev, board="nucleo-1", iid=5):

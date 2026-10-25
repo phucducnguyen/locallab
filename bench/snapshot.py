@@ -14,6 +14,7 @@ in the request URL, and never printed or put in argv.
 """
 
 import argparse
+import http.client
 import http.server
 import json
 import os
@@ -50,6 +51,7 @@ HTTP_TIMEOUT_S = 30.0
 BACKOFF = (1.0, 2.0, 5.0, 10.0, 30.0)
 SETTLE_S = 1.5
 SETTLE_PATH = "/__lw_settle.png"
+PROXY_PATHS = ("/", "/index.html", "/state.json")   # all the dashboard page loads
 SKIP_KINDS = ("LINK_DOWN",)
 PNG_MAGIC = b"\x89PNG\r\n\x1a\n"
 TINY_PNG = (b"\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\x00\x00\x00\x01\x00\x00\x00\x01"
@@ -186,7 +188,11 @@ class SettleProxy:
     the page's own state.json poll has drawn the board. The dashboard is untouched."""
 
     def __init__(self, target, settle=SETTLE_S):
-        self.target = target if target.endswith("/") else target + "/"
+        t = urllib.parse.urlsplit(target)
+        if t.scheme not in ("http", "https") or not t.hostname:
+            raise ValueError("dashboard URL must be http(s)://host[:port]/")
+        self.scheme, self.host, self.port = t.scheme, t.hostname, t.port
+        self.prefix = t.path.rstrip("/")
         proxy = self
 
         class H(http.server.BaseHTTPRequestHandler):
@@ -202,22 +208,21 @@ class SettleProxy:
                 self.wfile.write(body)
 
             def do_GET(self):
-                path = self.path.split("?", 1)[0]
+                req = urllib.parse.urlsplit(self.path)
+                path = req.path
+                if req.scheme or req.netloc or not path.startswith("/") or ".." in path:
+                    return self._send(400, "text/plain", b"bad path\n")
                 if path == SETTLE_PATH:
                     time.sleep(settle)
                     return self._send(200, "image/png", TINY_PNG)
+                if path not in PROXY_PATHS:
+                    return self._send(404, "text/plain", b"not found\n")
                 try:
-                    with urllib.request.urlopen(urllib.parse.urljoin(proxy.target,
-                                                                     path.lstrip("/")),
-                                                timeout=10) as r:
-                        body = r.read()
-                        ctype = r.headers.get("Content-Type", "application/octet-stream")
-                except urllib.error.HTTPError as e:
-                    code = e.code
-                    e.close()
-                    return self._send(code, "text/plain", b"upstream error\n")
-                except (urllib.error.URLError, OSError):
+                    code, ctype, body = proxy.fetch(path)
+                except (OSError, http.client.HTTPException):
                     return self._send(502, "text/plain", b"dashboard not answering\n")
+                if code != 200:
+                    return self._send(code, "text/plain", b"upstream error\n")
                 if path in ("/", "/index.html") and b"</body>" in body:
                     tag = ('<img src="%s" alt="" style="position:absolute;width:1px;'
                            'height:1px;opacity:0">' % SETTLE_PATH.lstrip("/")).encode()
@@ -228,6 +233,18 @@ class SettleProxy:
         self.srv.daemon_threads = True
         self.url = "http://127.0.0.1:%d/" % self.srv.server_address[1]
         threading.Thread(target=self.srv.serve_forever, daemon=True).start()
+
+    def fetch(self, path):
+        """(status, content type, body) of one allowed path on the fixed dashboard host."""
+        cls = (http.client.HTTPSConnection if self.scheme == "https"
+               else http.client.HTTPConnection)
+        conn = cls(self.host, self.port, timeout=10)
+        try:
+            conn.request("GET", self.prefix + path)
+            r = conn.getresponse()
+            return r.status, r.getheader("Content-Type", "application/octet-stream"), r.read()
+        finally:
+            conn.close()
 
     def close(self):
         self.srv.shutdown()
