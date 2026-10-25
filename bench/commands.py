@@ -24,6 +24,24 @@ of the bench DB unless --state-dir / $LW_STATE_DIR), written before each
 update is handled, so a restart never replays a command. Commands older than
 120 s when first seen are skipped too.
 
+Each /ask is kept in a small SQLite file, <directory of the bench DB>/asks.db
+($LW_ASKS_DB overrides), WAL mode, busy_timeout 5000, for bench/dashboard.py
+to show the latest question and answer (it opens the file read-only):
+
+    CREATE TABLE asks (
+        id          INTEGER PRIMARY KEY,
+        t_asked     REAL NOT NULL,   -- unix time the question was queued
+        question    TEXT NOT NULL,   -- as it went to the agent; "/ask 5" stays "/ask 5"
+        incident_id INTEGER,         -- 5 for "/ask 5", else NULL
+        answer      TEXT,            -- the text replied: condensed answer, timeout or failure
+        t_answered  REAL,            -- unix time of the answer, NULL while asked
+        status      TEXT NOT NULL    -- asked | answered | timeout | failed
+    )
+
+A row is inserted when the question is queued and updated when the answer
+comes back. It never holds user names, user ids, chat ids or tokens. A DB
+error is logged in one line and never stops the command.
+
 Secrets ($LW_SECRETS_DIR, default ~/.config/labwatch/): telegram_token,
 telegram_chat, bench_token. They are read from files when needed, never
 printed, never logged, never put in argv.
@@ -34,6 +52,7 @@ import json
 import os
 import queue
 import re
+import sqlite3
 import sys
 import threading
 import time
@@ -50,6 +69,10 @@ DEFAULT_API = "https://api.telegram.org"
 DEFAULT_SECRETS = "~/.config/labwatch/"
 DEFAULT_ENDPOINT = "http://172.18.0.1:8765"
 DEFAULT_DB = "~/.local/state/labwatch/bench.db"
+ASKS_DB_NAME = "asks.db"
+ASKS_SCHEMA = ("CREATE TABLE IF NOT EXISTS asks (id INTEGER PRIMARY KEY, t_asked REAL NOT NULL, "
+               "question TEXT NOT NULL, incident_id INTEGER, answer TEXT, t_answered REAL, "
+               "status TEXT NOT NULL)")
 POLL_TIMEOUT_S = 25
 ASK_TIMEOUT_S = 60.0
 REPLY_TRIES = 5
@@ -198,10 +221,12 @@ def _status(conn, now):
 class Bot:
     def __init__(self, api, secrets_dir, db_path, endpoint, state_dir, agent_config=None,
                  users=None, dry_run=False, out=None, clock=time.time,
-                 poll_timeout=POLL_TIMEOUT_S, ask_timeout=ASK_TIMEOUT_S):
+                 poll_timeout=POLL_TIMEOUT_S, ask_timeout=ASK_TIMEOUT_S, asks_db=None):
         self.api = api.rstrip("/")
         self.secrets = secrets_dir
         self.db_path = db_path
+        self.asks_db = (asks_db or os.environ.get("LW_ASKS_DB")
+                        or os.path.join(os.path.dirname(os.path.abspath(db_path)), ASKS_DB_NAME))
         self.endpoint = endpoint.rstrip("/")
         self.offset_path = os.path.join(state_dir, "telegram_offset")
         self.agent_config = agent_config
@@ -397,19 +422,82 @@ class Bot:
         status, resp = self.post("/run", {"sha": sha})
         return self._outcome("run %s" % sha[:12], status, resp)
 
+    # --- the asks DB (for the dashboard; never in the way of a reply) ---
+    def _asks_conn(self):
+        conn = sqlite3.connect(self.asks_db, timeout=5.0)
+        try:
+            conn.execute("PRAGMA busy_timeout=5000")
+            conn.execute("PRAGMA journal_mode=WAL")
+            conn.execute(ASKS_SCHEMA)
+        except Exception:
+            conn.close()
+            raise
+        return conn
+
+    def record_asked(self, question, incident_id):
+        """The new row's id, or None when the asks DB cannot be written."""
+        try:
+            conn = self._asks_conn()
+            try:
+                with conn:
+                    cur = conn.execute("INSERT INTO asks (t_asked, question, incident_id, status) "
+                                       "VALUES (?, ?, ?, 'asked')",
+                                       (self.clock(), question, incident_id))
+                return cur.lastrowid
+            finally:
+                conn.close()
+        except Exception as e:
+            self.log("commands: asks DB not written (%s)" % e.__class__.__name__)
+            return None
+
+    def record_answer(self, ask_id, status, answer):
+        if ask_id is None:
+            return
+        try:
+            conn = self._asks_conn()
+            try:
+                with conn:
+                    conn.execute("UPDATE asks SET answer=?, t_answered=?, status=? WHERE id=?",
+                                 (answer, self.clock(), status, ask_id))
+            finally:
+                conn.close()
+        except Exception as e:
+            self.log("commands: asks DB not written (%s)" % e.__class__.__name__)
+
+    def _forget_ask(self, ask_id):
+        if ask_id is None:
+            return
+        try:
+            conn = self._asks_conn()
+            try:
+                with conn:
+                    conn.execute("DELETE FROM asks WHERE id=?", (ask_id,))
+            finally:
+                conn.close()
+        except Exception as e:
+            self.log("commands: asks DB not written (%s)" % e.__class__.__name__)
+
     # --- /ask ---
     def cmd_ask(self, mid, arg):
         m = re.fullmatch(r"\s*#?(\d{1,6})\s*", arg or "")
+        incident_id = None
         if m:  # "/ask 5" means incident 5, as the alerts say
+            incident_id = int(m.group(1))
             arg = ("What happened in incident %s, is it the hardware or the code, and what "
                    "should we do next? Answer in at most 4 short plain sentences." % m.group(1))
         question = printable(arg, QUESTION_MAX)
         if not question:
             self.reply(mid, "usage: /ask <question>")
             return
+        if self.asks.full():
+            self.reply(mid, "busy: %d questions already waiting" % ASK_QUEUE)
+            return
+        shown = "/ask %d" % incident_id if incident_id is not None else question
+        ask_id = self.record_asked(shown, incident_id)
         try:
-            self.asks.put_nowait((mid, question))
+            self.asks.put_nowait((mid, question, ask_id))
         except queue.Full:
+            self._forget_ask(ask_id)
             self.reply(mid, "busy: %d questions already waiting" % ASK_QUEUE)
             return
         self._start_worker()
@@ -421,31 +509,46 @@ class Bot:
 
     def _ask_loop(self):
         while True:
-            mid, question = self.asks.get()
+            mid, question, ask_id = self.asks.get()
             try:
-                self.reply(mid, self.ask(question))
+                try:
+                    status, text = self._ask(question)
+                except Exception as e:
+                    self.log("commands: /ask failed (%s)" % e.__class__.__name__)
+                    self.record_answer(ask_id, "failed",
+                                       "ask: failed (%s)" % e.__class__.__name__)
+                    continue
+                self.record_answer(ask_id, status, text)
+                self.reply(mid, text)
             except Exception as e:
                 self.log("commands: /ask failed (%s)" % e.__class__.__name__)
             finally:
                 self.asks.task_done()
 
     def ask(self, question):
+        return self._ask(question)[1]
+
+    def _ask(self, question):
+        """(status, reply text); status is answered, timeout or failed."""
         try:
             cfg = explain.load_config(self.agent_config)
         except explain.ConfigError as e:
-            return "ask: the agent is not configured (%s)" % printable(str(e), 120)
+            return "failed", "ask: the agent is not configured (%s)" % printable(str(e), 120)
         argv, message, stdin_message = build_ask_command(cfg, question)
         self.log("commands: /ask in a fresh agent session")
         try:
             rc, raw = explain.run_agent(argv, message, self.ask_timeout, stdin_message)
         except OSError as e:
-            return "ask: cannot start the agent (%s)" % e.__class__.__name__
+            return "failed", "ask: cannot start the agent (%s)" % e.__class__.__name__
         if rc is None:
-            return "ask: no answer within %.0f s" % self.ask_timeout
+            return "timeout", "ask: no answer within %.0f s" % self.ask_timeout
         answer = condense(explain.clean_reply(raw or b""))
         if rc != 0:
-            return "ask: the agent failed (exit %d)%s" % (rc, "\n" + answer if answer else "")
-        return answer or "ask: the agent gave an empty answer"
+            return "failed", "ask: the agent failed (exit %d)%s" % (
+                rc, "\n" + answer if answer else "")
+        if not answer:
+            return "failed", "ask: the agent gave an empty answer"
+        return "answered", answer
 
     # --- loop ---
     def step(self):
