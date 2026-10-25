@@ -172,6 +172,13 @@ class MirrorStubDbTest(Base):
     def setUp(self):
         super().setUp()
         make_db.build(self.db)
+        # The stub's jumper (1) and flap (2) are the same problem on one board, which C4
+        # puts on one issue (tests/test_c_reuse.py). Here the flap is on a second board,
+        # so these per-incident tests keep three problems.
+        conn = stub_connect(self.db)
+        conn.execute("UPDATE incidents SET board='nucleo-2' WHERE id=2")
+        conn.commit()
+        conn.close()
         self.do_setup()
 
     def test_one_issue_per_routing_row_with_number_stored(self):
@@ -220,12 +227,16 @@ class MirrorStubDbTest(Base):
                               "jumper", "--speed", "0"], cwd=ROOT, capture_output=True,
                              text=True, check=True)
         iid = int(out.stdout.strip())
-        done = self.creates(self.mirror().once())
-        self.assertEqual(len(done), 1)
-        issue = self.fake.issues()[-1]
-        self.assertTrue(issue["title"].startswith("[lw-%d] nucleo-1 HEALTH_FAIL: HARDWARE"
-                                                  % iid))
-        self.assertEqual([lb["name"] for lb in issue["labels"]], ["hardware"])
+        # The same problem as incident 1 (closed minutes ago): reopened, no new issue.
+        done = self.mirror().once()
+        self.assertEqual(self.creates(done), [])
+        self.assertEqual(len(self.fake.issues()), 3)
+        issue = [i for i in self.fake.issues() if i["title"].startswith("[lw-1] ")][0]
+        self.assertTrue(issue["title"].startswith("[lw-1] nucleo-1 HEALTH_FAIL: HARDWARE"))
+        self.assertIn("lw-key: boardnucleo-1/loopback/OPEN", issue["body"].splitlines())
+        self.assertEqual(issue["state"], "open")
+        self.assertTrue(any(c.startswith("happened again at ") and "incident %d," % iid in c
+                            for c in issue["comments"]), issue["comments"])
         self.assertEqual(self.rows("SELECT ticket FROM incidents WHERE id=?", iid)[0]["ticket"],
                          str(issue["number"]))
 
