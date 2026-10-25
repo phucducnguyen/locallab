@@ -18,16 +18,20 @@ import shutil
 import sys
 import time
 
-from bench.status_data import Db, EventTail, LogTail, clean, loads
+from bench.status_data import (DEVICES, VDD_MIN_MV, Db, EventTail, LogTail, clean,
+                                health_bad, latest_health, loads, parse_health)
 
 FOOTER = "model: Qwen3.6-35B-A3B on this GB10 - no internet"
 FRAME_S = 0.1          # redraw period (10 per second)
 SERIAL_MIN = 3
 WAIT_MAX_S = 600.0    # show a running "waiting" timer this long, then "--"
 
-_BAD_RE = re.compile(r"loopback=(OPEN|STUCK)|HARDFAULT|RESULT FAIL")
-_OK_RE = re.compile(r"HEALTH\b.*loopback=OK\b")
-_LB_RE = re.compile(r"loopback=([A-Z]+)")
+_BAD_RE = re.compile(r"HARDFAULT|RESULT FAIL")
+
+PINS = {"loopback": "A0-A1/PA1", "sensor": "A2-A3/PB0", "radio": "A4-A5/PC0"}
+BOARD_ROWS = (("loopback", "loopback (A0-A1)"), ("sensor", "sensor (A2-A3)"),
+              ("radio", "radio (A4-A5)"), ("estop", "estop (B1)"), ("vdd", "vdd"),
+              ("temp", "temp"))
 
 KIND_WORDS = {"HEALTH_FAIL": "loopback check failing", "SILENT": "board silent",
               "LINK_DOWN": "serial link down", "REBOOT": "unexpected reboot",
@@ -46,8 +50,14 @@ def classify(line):
     lw = line[i:] if i >= 0 else line
     if lw.startswith("LW DUMP") or _BAD_RE.search(lw):
         return "bad"
-    if _OK_RE.search(lw):
-        return "ok"
+    h = parse_health(lw)
+    if h is not None:
+        # One predicate for the line and the BOARD panel: any device OPEN/STUCK,
+        # estop ON or vdd under 3000 mV is red; otherwise green once loopback is OK.
+        if health_bad(h):
+            return "bad"
+        if h.get("loopback") == "OK":
+            return "ok"
     return "plain"
 
 
@@ -102,30 +112,39 @@ def _registers(ev):
     return {}
 
 
-def _loopback(ev):
-    for v in ((ev.get("fields") or {}).get("loopback") if isinstance(ev.get("fields"), dict)
-              else None,
-              (ev.get("facts") or {}).get("loopback") if isinstance(ev.get("facts"), dict)
-              else None):
-        if isinstance(v, list) and v:
-            v = v[-1]
-        if isinstance(v, str) and v:
-            return v
-    for c in ev.get("lines") or []:
+def _bad_devices(ev):
+    """{device: OPEN|STUCK} for a HEALTH_FAIL incident, read defensively from the evidence."""
+    out = {}
+    for src in (ev.get("fields"), ev.get("facts")):
+        if not isinstance(src, dict):
+            continue
+        for d in DEVICES:
+            v = src.get(d)
+            if isinstance(v, list) and v:
+                v = v[-1]
+            if v in ("OPEN", "STUCK"):
+                out.setdefault(d, v)
+    if out:
+        return out
+    lines = ev.get("lines")
+    for c in lines if isinstance(lines, list) else []:
         line = c.get("line") if isinstance(c, dict) else c
-        m = _LB_RE.search(line) if isinstance(line, str) else None
-        if m and m.group(1) != "OK":
-            return m.group(1)
-    return None
+        h = parse_health(line) if isinstance(line, str) else None
+        for d, v in health_bad(h) if h else []:
+            if d in DEVICES:
+                out.setdefault(d, v)
+    return out
 
 
-def banner(inc):
-    """(title, detail) for one open incident."""
+def banner(inc, causes=None):
+    """(title, head, detail) for one open incident; causes are DUMP cause names."""
     ev = loads(inc.get("evidence"))
     kind, triage = inc.get("kind") or "?", inc.get("triage") or "UNKNOWN"
     fl = _file_line(ev)
     if kind == "HEALTH_FAIL":
-        title = "loopback %s on PA1" % (_loopback(ev) or "failing")
+        bad = _bad_devices(ev)
+        title = (", ".join("%s %s on %s" % (d, v, PINS[d]) for d, v in sorted(bad.items()))
+                 if bad else "board health check failing")
     elif kind == "HARDFAULT":
         if fl:
             title = "HardFault at %s" % fl
@@ -140,6 +159,10 @@ def banner(inc):
     bits = _decoded(ev)
     if bits:
         detail = "  ".join("%s %s" % (reg, " ".join(names)) for reg, names in sorted(bits.items()))
+    if causes:
+        detail = ("cause %s" % " ".join(causes)) + ("  " + detail if bits else "")
+    elif bits:
+        pass
     else:
         detail = inc.get("reason") or ""
     state = inc.get("state") or "OPEN"
@@ -174,11 +197,38 @@ def stopwatch(inc, alerts, now):
 
     t0s = (time.strftime("%H:%M:%S", time.gmtime(t0)) + ".%03d" % int((t0 % 1) * 1000)
            if t0 is not None else "--")
-    row = "#%-3s %-11s %-8s fault %s | alert %s | explain %s | fix PR %s" % (
+    marks = "".join(" [%s]" % m for m in ("diag", "confirmed")
+                    if _sent(alerts, lambda t, m=m: t == m) is not None)
+    row = "#%-3s %-11s %-8s fault %s | alert %s | explain %s | fix PR %s%s" % (
         inc.get("id"), inc.get("kind"), inc.get("triage"), t0s,
         rel(alert, True), rel(explain, alert is not None),
-        rel(fix, False) if inc.get("triage") == "CODE" or fix else "n/a")
+        rel(fix, False) if inc.get("triage") == "CODE" or fix else "n/a", marks)
     return clean(row, 300)
+
+
+# ---------- the board panel ----------
+
+def board_panel(h):
+    """Title plus one row per device from the newest HEALTH line (absent = unknown)."""
+    h = h or {}
+    bad = dict(health_bad(h)) if h else {}
+    rows = [("BOARD (latest LW HEALTH%s)" % (" %s" % h["n"] if h.get("n") is not None else
+                                             "" if h else ": none yet"), "title")]
+    for key, label in BOARD_ROWS:
+        v = h.get(key)
+        if v is None:
+            text, style = "unknown", "dim"
+        elif key == "vdd":
+            text = "%d mV%s" % (v, " (under %d mV)" % VDD_MIN_MV if key in bad else "")
+            style = "bad" if key in bad else "ok"
+        elif key == "temp":
+            text, style = "%g C" % v, "plain"   # no threshold agreed
+        else:
+            text = "%s" % v + (" on %s" % PINS[key] if key in bad and key in PINS else "")
+            style = "bad" if key in bad else "ok"
+        mark = "! " if style == "bad" else "+ " if style == "ok" else "  "
+        rows.append(("%s%-18s %s" % (mark, label, clean(text, 60)), style))
+    return rows
 
 
 # ---------- the frame ----------
@@ -200,7 +250,7 @@ def frame(st, serial_lines, serial_note, width, height, now):
         top.append(("! " + clean(st["error"], 200), "bad"))
 
     for inc in st["open"][:3]:
-        title, head, detail = banner(inc)
+        title, head, detail = banner(inc, st.get("causes", {}).get(inc.get("id")))
         top.append(("", "banner"))
         top.append(("  >>> %s <<<" % title, "banner"))
         top.append(("      " + head, "banner"))
@@ -210,6 +260,7 @@ def frame(st, serial_lines, serial_note, width, height, now):
     if len(st["open"]) > 3:
         top.append(("  ... and %d more open" % (len(st["open"]) - 3), "bad"))
 
+    mid += board_panel(latest_health(list(serial_lines)))
     mid.append(("STOPWATCH (seconds after the first bad line)", "title"))
     if st["recent"]:
         for inc in st["recent"][:4]:
