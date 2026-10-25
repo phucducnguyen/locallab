@@ -26,6 +26,29 @@ explanation worker runs "python3 -m agent.explain --incident <id>" (60 s,
 one at a time, newest first) and queues its text, or "explanation
 unavailable; triage stands", as the "explain" row replying to the first alert.
 
+Integration (I1):
+- Requests (bench.requests): at startup running rows are failed (a killed
+  bench never redoes them). When nothing is being flashed or run and the link
+  is up, the oldest pending row is claimed: "run <sha>" goes through the same
+  FlashJob as --flash and is finished with its run's verdict and run_id;
+  "test <name>" is sent only when the board allows it (LW RESULT then one
+  LW ALIVE) and is finished on its LW REPLY test or after 3 s.
+- --watch starts bench.watcher in a thread with its own DB connection: a new
+  head of ~/bench-fw main queues a run request.
+- A HARDFAULT (incident or run) gets bench.decode.fault_evidence merged into
+  its evidence before the insert, so the first alert carries Fault:/File:.
+  addr2line gets 300 ms; slower, the alert goes first and the decode follows
+  as a "decode" alert.
+- An UNKNOWN result that bench.confirm settles is confirmed after the first
+  alert and the diagnostic, on a worker thread: the last passing sha is
+  reflashed through the same FlashJob (detection is paused by the flash) and
+  the "confirmed" alert written; bench_state then names the reflashed sha.
+- LW DUMP bursts (bench.dump) are paired with the HARDFAULT record they
+  precede, which then carries rec["dump"].
+- agent.fix: bench.flash has no flash_and_capture(src_dir, ...) (a patched
+  tree is not a commit on main and the serial port belongs to this process).
+  Use agent.fix's verify_cmd with the bench stopped for the fix beat.
+
 Board text is data: it is stored, quoted and matched, never executed.
 """
 
@@ -39,7 +62,9 @@ import sys
 import threading
 import time
 
-from bench import alerts, store
+from bench import alerts, confirm, decode, fwrepo, requests, store
+from bench.dump import DumpCollector
+from bench.parser import FAULT_FIELDS
 from bench.incidents import Incident, Machine, COPY_WINDOW_S, FLASH_WINDOW_S, sha_match
 from bench.serial_owner import wall_ts
 from bench.triage import PassHistory, judge_incident, judge_run, route_for
@@ -50,6 +75,11 @@ DIAG_TIMEOUT_S = 3.0
 EXPLAIN_TIMEOUT_S = 60.0
 HAND_FLASH_WINDOW_S = 120.0
 FAULT_TAIL_S = 3.0
+TEST_TIMEOUT_S = 3.0
+DECODE_BUDGET_S = 0.3
+CONFIRM_TIMEOUT_S = 420.0
+ELF_DIR = os.path.join(os.path.dirname(store.DEFAULT_DB), "elf")
+BOOTED = ("PASS", "FAIL", "HARDFAULT", "RESET_LOOP")
 TAIL_MAX = 20
 SHA_RE = re.compile(r"[0-9a-f]{7,40}")
 
@@ -141,8 +171,24 @@ class ExplainWorker:
 class Bench:
     def __init__(self, conn, board=DEFAULT_BOARD, send=None, explainer=None,
                  diag_timeout=DIAG_TIMEOUT_S, log=print, machine=None,
-                 fault_tail_s=FAULT_TAIL_S):
+                 fault_tail_s=FAULT_TAIL_S, repo=None, elf_dir=None,
+                 decode_runner=subprocess.run, addr2line_tool=None,
+                 decode_budget_s=DECODE_BUDGET_S, test_timeout=TEST_TIMEOUT_S):
         self.conn = conn
+        self.repo = repo
+        self.elf_dir = os.path.expanduser(elf_dir or ELF_DIR)
+        self.decode_runner = decode_runner
+        self.addr2line_tool = addr2line_tool
+        self.decode_budget_s = decode_budget_s
+        self.test_timeout = test_timeout
+        self.dumps = DumpCollector()
+        self.call = None         # Loop.call: run a function on the bench thread
+        self.make_flash = None   # make_flash(sha) -> a started FlashJob
+        self.job = None          # the FlashJob in progress (requests, --flash, confirm)
+        self.request = None      # the bench_requests row being served
+        self.confirming = False
+        self._cur = None         # the record being applied (decode cache)
+        self._decodes = []       # decodes that missed the budget
         self.board = board
         self.send = send
         self.explainer = explainer
@@ -163,6 +209,10 @@ class Bench:
 
     # ---- startup ----
     def _load(self):
+        requests.init(self.conn)
+        n = requests.recover_running(self.conn, time.time())
+        if n:
+            self.log("bench: %d request(s) left running by a restart marked failed" % n)
         r = self.conn.execute("SELECT verified_sha FROM bench_state WHERE board=?",
                               (self.board,)).fetchone()
         if r and r["verified_sha"]:
@@ -275,10 +325,18 @@ class Bench:
                 eid = store.event(self.conn, t, self.board, rec.get("kind", "OTHER"), fields,
                                   raw_ts)
             cite = {"event_id": eid, "raw_ts": raw_ts, "line": rec.get("line", "")}
+            d = self.dumps.feed(t, rec, cite)
+            if d is not None:
+                rec["dump"] = d
             if self.tail is not None and len(self.tail["lines"]) < TAIL_MAX:
                 self.tail["lines"].append(cite)
             self._diag_line(t, rec, cite)
-            self.apply(self.m.record(t, rec, cite), t)
+            self._request_line(t, rec, cite)
+            self._cur = {"rec": rec}
+            try:
+                self.apply(self.m.record(t, rec, cite), t)
+            finally:
+                self._cur = None
 
     def tick(self, t=None):
         t = time.time() if t is None else t
@@ -286,7 +344,10 @@ class Bench:
             self._finish_diag(t)
         if self.tail is not None and t >= self.tail["until"]:
             self._finish_tail()
+        self.dumps.expire(t)
         self.apply(self.m.tick(t), t)
+        self._decode_followups(t)
+        self._serve_requests(t)
 
     def _finish_tail(self):
         tail, self.tail = self.tail, None
@@ -326,6 +387,7 @@ class Bench:
                 with self.conn:
                     self._route(o["t"], run["triage"], run["reason"], run_id=run["run_id"])
                 run["routed"] = True
+                self._maybe_confirm_run(run)
 
     def _set_verified(self, sha, t):
         self.conn.execute("INSERT INTO bench_state (board, verified_sha, t) VALUES (?, ?, ?) "
@@ -347,6 +409,9 @@ class Bench:
         ev["lines"] = inc.cites
         ev["facts"] = inc.facts
         ev["repeats"] = inc.repeats
+        extras = getattr(self.m, "extras", None)
+        if extras:  # device, pins, pin_in, power, dump at the top level (I2)
+            ev.update(extras(inc))
         ev.setdefault("file_line", None)
         inc.evidence = ev
         return store.dumps(ev)
@@ -366,6 +431,15 @@ class Bench:
         t_pass = self.history.passed(sha) if sha else None
         lp_sha, lp_t = (sha, t_pass) if t_pass is not None else self.history.last()
         inc.evidence = {"run_id": run["run_id"] if run else None}
+        pending = None
+        if inc.kind == "HARDFAULT":
+            dsha = sha or (run["sha"] if run else None)
+            ev, pending = self._fault_decode((inc.facts or {}).get("fault") or {}, dsha)
+            if ev:
+                inc.evidence.update(ev)
+            cur = (self._cur or {}).get("rec") or {}
+            if cur.get("dump") is not None and "dump" not in (inc.facts or {}):
+                inc.evidence["dump"] = cur["dump"]
         with self.conn:
             iid = store.insert(self.conn, "incidents", {
                 "board": self.board, "kind": inc.kind, "state": "OPEN", "opened": t,
@@ -382,6 +456,8 @@ class Bench:
                          "run_id": run["run_id"] if run else None})
             aid = store.add_alert(self.conn, iid, "open",
                                   alerts.alert_text("open", self._row(iid), o.get("cite")), t)
+        if pending is not None:
+            pending["ids"].append(("incident", iid))
         self.log("bench: incident %d OPEN %s triage=%s route=%s (alert %s)" % (
             iid, inc.kind, triage, route or "none", aid))
         self._after_first_alert(inc, t)
@@ -399,6 +475,7 @@ class Bench:
                               (self._write_evidence(inc), inc.db_id))
         if self.explainer:
             self.explainer.queue(inc.db_id)
+        self._maybe_confirm_incident(inc)
 
     def _diag_line(self, t, rec, cite):
         d = self.diag
@@ -425,6 +502,7 @@ class Bench:
             inc.db_id, "replied" if d["cites"] else "no reply", aid))
         if self.explainer:
             self.explainer.queue(inc.db_id)
+        self._maybe_confirm_incident(inc)
 
     def _flap(self, o):
         inc, t = o["inc"], o["t"]
@@ -498,9 +576,22 @@ class Bench:
                 evidence[k] = run[k]
         if fl.get("elf"):
             evidence["elf"] = fl["elf"]
+        pending = None
+        cur = (self._cur or {}).get("rec") or {}
+        if run["verdict"] == "HARDFAULT" and cur.get("kind") == "HARDFAULT":
+            fields = {k: cur[k] for k in FAULT_FIELDS if k in cur}
+            ev, pending = self._fault_decode(fields, run["sha"], fl.get("elf"))
+            if ev:
+                evidence.update(ev)
+            if cur.get("dump") is not None:
+                evidence["dump"] = cur["dump"]
+        subject = None
+        if verified:
+            subject = (fwrepo.subject(self.repo, run["sha"]) if self.repo else None) \
+                or fl.get("subject")
         with self.conn:
             run["run_id"] = store.insert(self.conn, "runs", {
-                "commit": sha, "subject": fl.get("subject") if verified else None,
+                "commit": sha, "subject": subject,
                 "verdict": run["verdict"], "triage": triage,
                 "evidence": store.dumps(evidence),
                 "duration_s": round(t - run["t_start"], 3), "t_start": run["t_start"],
@@ -516,6 +607,8 @@ class Bench:
                 self._set_verified(None, t)
             store.event(self.conn, t, self.board, "RUN_END",
                         {"run_id": run["run_id"], "verdict": run["verdict"], "triage": triage})
+        if pending is not None:
+            pending["ids"].append(("run", run["run_id"]))
         self.log("bench: run %d of %s %s triage=%s" % (run["run_id"], run["sha"],
                                                        run["verdict"], triage))
         if run["verdict"] == "HARDFAULT":
@@ -524,6 +617,200 @@ class Bench:
             self.finished.append((run["run_id"], run["verdict"]))
         if run["verdict"] == "GARBLED" and self.probe:
             self.probe(run["run_id"])
+
+    # ---- decode (bench.decode) ----
+    def _fault_decode(self, fields, sha, elf=None):
+        """(evidence or None, pending box or None) for one HARDFAULT record.
+
+        Shared by the run-end and incident-open paths of the same record. The
+        decode gets decode_budget_s; slower, it finishes later as a "decode" alert.
+        """
+        cur = self._cur
+        if cur is not None and "decode" in cur:
+            return cur["decode"]
+        if not elf and self._flash and sha and sha_match(self._flash.get("sha"), sha):
+            elf = self._flash.get("elf")
+        elf = elf or decode.elf_path(self.elf_dir, sha)
+        box = {"done": threading.Event(), "ev": None, "ids": []}
+
+        def work():
+            try:
+                box["ev"] = decode.fault_evidence(fields, elf, tool=self.addr2line_tool,
+                                                  runner=self.decode_runner)
+            except Exception:  # a decode never breaks the alert
+                box["ev"] = None
+            box["done"].set()
+        threading.Thread(target=work, name="decode", daemon=True).start()
+        if box["done"].wait(self.decode_budget_s):
+            res = (box["ev"], None)
+        else:
+            self._decodes.append(box)
+            res = (None, box)
+            self.log("bench: addr2line slower than %.1f s; the decode follows the alert" %
+                     self.decode_budget_s)
+        if cur is not None:
+            cur["decode"] = res
+        return res
+
+    def _decode_followups(self, t):
+        for box in [b for b in self._decodes if b["done"].is_set()]:
+            self._decodes.remove(box)
+            ev = box["ev"]
+            if not ev:
+                continue
+            with self.conn:
+                for what, i in box["ids"]:
+                    table, key = ("incidents", "id") if what == "incident" else ("runs", "run_id")
+                    row = self.conn.execute("SELECT evidence FROM %s WHERE %s=?" % (table, key),
+                                            (i,)).fetchone()
+                    if row is None:
+                        continue
+                    old = json.loads(row["evidence"] or "{}")
+                    old.update(ev)
+                    self.conn.execute("UPDATE %s SET evidence=? WHERE %s=?" % (table, key),
+                                      (store.dumps(old), i))
+                    if what == "incident":
+                        inc = next((x for x in list(self.m.active.values()) +
+                                    list(self.m.recent.values()) if x.db_id == i), None)
+                        if inc is not None and isinstance(getattr(inc, "evidence", None), dict):
+                            inc.evidence.update(ev)
+                        lines = ["LOCAL LAB incident %d decode" % i]
+                        fault = decode.fault_alert_line(ev)
+                        if fault:
+                            lines.append(fault)
+                        if ev.get("file_line"):
+                            lines.append("File: %s" % ev["file_line"])
+                        lines.append("Incident: %d" % i)
+                        store.add_alert(self.conn, i, "decode", "\n".join(lines), t)
+
+    # ---- requests (bench.requests) ----
+    def _start_job(self, sha):
+        """Start a flash of sha through make_flash; None while another job runs."""
+        if self.make_flash is None or (self.job is not None and not self.job.done.is_set()):
+            return None
+        self.job = self.make_flash(sha)
+        return self.job
+
+    def idle(self):
+        return bool(self.m.link and self.m.expect is None and self.m.run is None
+                    and self.tail is None and self.diag is None and self.request is None
+                    and not self.confirming
+                    and (self.job is None or self.job.done.is_set()))
+
+    def _finish_request(self, t, ok, result, run_id=None):
+        r, self.request = self.request, None
+        requests.finish(self.conn, r["id"], t, ok, result, run_id)
+        self.log("bench: request %d %s %s: %s" % (r["id"], r["kind"], r["arg"][:12],
+                                                  result))
+
+    def _request_line(self, t, rec, cite):
+        r = self.request
+        if r is not None and r["kind"] == "test" and rec.get("kind") == "REPLY" \
+                and rec.get("cmd") == "test":
+            self._finish_request(t, True, "reply: %s" % rec.get("line", ""))
+
+    def _serve_requests(self, t):
+        if self.make_flash is None:
+            return
+        r = self.request
+        if r is not None:
+            if r["kind"] == "run" and len(self.finished) > r["n"]:
+                run_id, verdict = self.finished[r["n"]]
+                self._finish_request(t, verdict == "PASS", verdict, run_id)
+            elif t >= r["deadline"]:
+                self._finish_request(t, False, "no LW REPLY test within %.0f s" %
+                                     self.test_timeout if r["kind"] == "test"
+                                     else "no run was recorded")
+            return
+        if not self.idle():
+            return
+        row = requests.claim_next(self.conn, t)
+        if row is None:
+            return
+        self.request = {"id": row["id"], "kind": row["kind"], "arg": row["arg"],
+                        "n": len(self.finished), "deadline": t + CONFIRM_TIMEOUT_S}
+        self.log("bench: request %d %s %s (%s)" % (row["id"], row["kind"], row["arg"][:12],
+                                                   row["source"]))
+        if row["kind"] == "run":
+            if self._start_job(row["arg"]) is None:
+                self._finish_request(t, False, "the bench could not start a flash")
+        elif self.send and self.m.can_send() and self.send("test %s" % row["arg"]):
+            self.request["deadline"] = t + self.test_timeout
+        else:
+            self._finish_request(t, False, "the board is not ready for a test "
+                                 "(needs LW RESULT then one LW ALIVE)")
+
+    # ---- confirm (bench.confirm) ----
+    def _maybe_confirm_incident(self, inc):
+        if self.make_flash is None or self.call is None or self.confirming:
+            return
+        row = self._row(inc.db_id)
+        run = inc.run or {}
+        if not confirm.needs_confirm(row["triage"], verdict=run.get("verdict"), kind=inc.kind,
+                                     tests=run.get("tests")):
+            return
+        subject = {"incident_id": inc.db_id, "run_id": run.get("run_id"),
+                   "verdict": run.get("verdict"), "triage": row["triage"], "kind": inc.kind,
+                   "firmware": row["firmware"] or run.get("sha")}
+        self._start_confirm(subject, row["last_pass_sha"] or self.history.last()[0],
+                            inc.db_id, run.get("run_id"))
+
+    def _maybe_confirm_run(self, run):
+        if self.make_flash is None or self.call is None or self.confirming:
+            return
+        if not confirm.needs_confirm(run.get("triage"), verdict=run["verdict"],
+                                     tests=run.get("tests")):
+            return
+        subject = {"run_id": run["run_id"], "verdict": run["verdict"],
+                   "triage": run["triage"], "commit": run["sha"]}
+        self._start_confirm(subject, self.history.last()[0], None, run["run_id"])
+
+    def _start_confirm(self, subject, last_pass, iid, run_id):
+        self.confirming = True
+        self.log("bench: confirming %s by reflashing last pass %s" % (
+            "incident %d" % iid if iid else "run %s" % run_id, last_pass))
+
+        def work():
+            try:
+                res = confirm.confirm(subject, last_pass, self._flash_and_capture)
+            except Exception as e:  # never kill the bench
+                self.log("bench: confirm error %s" % e.__class__.__name__)
+                res = None
+            self.call(self._confirm_done, res, iid, run_id, wait=False)
+        threading.Thread(target=work, name="confirm", daemon=True).start()
+
+    def _flash_and_capture(self, sha, timeout=CONFIRM_TIMEOUT_S):
+        """confirm's hook, on the confirm thread: flash sha through the bench, wait for its run."""
+        end = time.monotonic() + timeout
+        while True:
+            n = self.call(lambda: len(self.finished))
+            if self.call(self._start_job, sha) is not None:
+                break
+            if time.monotonic() > end:
+                raise TimeoutError("the bench stayed busy")
+            time.sleep(0.1)
+        while self.call(lambda: len(self.finished)) <= n:
+            if time.monotonic() > end:
+                raise TimeoutError("the reflash recorded no run")
+            time.sleep(0.1)
+        run_id, verdict = self.call(lambda: self.finished[n])
+        lines = self.call(self._run_lines, run_id)
+        return confirm.Capture(verdict, lines, run_id)
+
+    def _run_lines(self, run_id):
+        row = self.conn.execute("SELECT evidence FROM runs WHERE run_id=?", (run_id,)).fetchone()
+        return json.loads(row["evidence"] or "{}").get("lines", []) if row else []
+
+    def _confirm_done(self, res, iid, run_id):
+        self.confirming = False
+        if res is None:
+            return
+        aid = confirm.write_confirm(self.conn, res, incident_id=iid, run_id=run_id)
+        if res.reflash_verdict in BOOTED and res.last_pass_sha:
+            with self.conn:
+                self._set_verified(res.last_pass_sha, time.time())
+        self.log("bench: %s %s -> %s (alert %s)" % (
+            "incident %d" % iid if iid else "run %s" % run_id, res.status, res.triage, aid))
 
     def _log(self, o):
         what = o["what"]
@@ -551,6 +838,7 @@ class Loop:
         self.calls = queue.Queue()
         self.last_hb = 0.0
         self.thread = threading.current_thread()
+        bench.call = self.call
 
     def call(self, fn, *args, wait=True, timeout=60.0):
         if threading.current_thread() is self.thread:
@@ -589,6 +877,22 @@ class Loop:
             self.last_hb = now
 
 
+def start_watcher(db, repo, stop, interval=None, log=print):
+    """bench.watcher in a daemon thread with its own DB connection."""
+    from bench import watcher
+
+    def run():
+        conn = store.open_db(db)
+        try:
+            w = watcher.Watcher(conn, repo, log=log)
+            w.loop(watcher.INTERVAL_S if interval is None else interval, stop=stop)
+        finally:
+            conn.close()
+    th = threading.Thread(target=run, name="watcher", daemon=True)
+    th.start()
+    return th
+
+
 def main(argv=None):
     ap = argparse.ArgumentParser(prog="python3 -m bench.run")
     ap.add_argument("--port", help="serial port (default: first /dev/serial/by-id/*STM*)")
@@ -607,6 +911,8 @@ def main(argv=None):
                          "(default %(default)s)")
     ap.add_argument("--explain-timeout", type=float, default=EXPLAIN_TIMEOUT_S)
     ap.add_argument("--no-explain", action="store_true")
+    ap.add_argument("--watch", action="store_true",
+                    help="also run the repo watcher: a new head of main queues a run")
     a = ap.parse_args(argv)
     for opt in ("flash", "expect_flash"):
         v = getattr(a, opt)
@@ -633,8 +939,12 @@ def main(argv=None):
     explainer = None if a.no_explain else ExplainWorker(db, timeout=a.explain_timeout,
                                                         log=log).start()
     owner = SerialOwner(port=a.port)
-    bench = Bench(conn, a.board, send=owner.send, explainer=explainer, log=log)
+    state_dir = os.path.dirname(db)
+    bench = Bench(conn, a.board, send=owner.send, explainer=explainer, log=log, repo=repo,
+                  elf_dir=os.path.join(state_dir, "elf"))
     loop = Loop(bench, owner.events, conn)
+    bench.make_flash = lambda sha: flashmod.FlashJob(bench, loop.call, repo, sha, state_dir,
+                                                     log=log).start()
 
     def probe(run_id):
         owner.request_probe(callback=lambda res: loop.call(bench.attach_probe, run_id, res,
@@ -643,10 +953,12 @@ def main(argv=None):
     if a.expect_flash:
         bench.expect_flash(a.expect_flash, a.flash_window)
     owner.start()
+    stop = threading.Event()
+    if a.watch:
+        start_watcher(db, repo, stop, log=log)
     job = None
     if a.flash:
-        job = flashmod.FlashJob(bench, loop.call, repo, a.flash,
-                                os.path.dirname(db), log=log).start()
+        job = bench._start_job(a.flash)
     rc = 0
     try:
         while True:
@@ -659,6 +971,7 @@ def main(argv=None):
     except KeyboardInterrupt:
         pass
     finally:
+        stop.set()
         owner.stop()
         if explainer:
             explainer.stop()
