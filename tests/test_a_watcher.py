@@ -55,6 +55,20 @@ class WatcherTest(unittest.TestCase):
         w.poll()
         self.assertEqual(self.queued(), [("watcher", "run", c2), ("watcher", "run", c1)])
 
+    def test_a_move_to_a_keyed_commit_queues_nothing(self):
+        from tests.test_a_endpoint import make_history_repo
+        repo = os.path.join(self.tmp.name, "history")
+        k1, k2, k3 = make_history_repo(repo)
+        w = Watcher(self.conn, repo, log=self.logs.append)
+        w.poll()
+        git(repo, "reset", "-q", "--hard", k1)        # main moved back into the keyed history
+        self.assertIsNone(w.poll())
+        self.assertIsNone(w.poll())
+        self.assertEqual(len([s for s in self.logs if "not a bench commit" in s]), 1)
+        git(repo, "reset", "-q", "--hard", k2)
+        self.assertIsNotNone(w.poll())
+        self.assertEqual(self.queued(), [("watcher", "run", k2)])
+
     def test_restart_triggers_only_on_a_real_change(self):
         self.watcher().poll()
         self.assertIsNone(self.watcher().poll())    # restarted, head unchanged

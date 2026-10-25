@@ -14,7 +14,8 @@ there with LW_HOST=172.18.0.1) and LW_PORT (8765).
 - /show?ref=: full match of ^[0-9a-f]{7,40}$, a commit, an ancestor of
   main of the bench repo ($LW_FW_REPO, ~/bench-fw); git show --no-decorate
   --no-ext-diff --end-of-options <sha> -- src/ as a list argv, 400 lines.
-  Anything else is 400.
+  The commit's own tree must hold no CASES.md, logs/ or bugs/ (main keeps the
+  original history; its early trees hold the answer key). Anything else is 400.
 - POST /board/test: one of the five self-tests, only once the board has
   printed LW RESULT (and one LW ALIVE) since its last boot. POST /run: a sha
   on main, at most one accepted per 60 s. Both 429 while the hold file
@@ -237,6 +238,8 @@ class Endpoint:
             return 400, {"error": "ref is not a commit in the bench repo"}
         if not fwrepo.on_main(self.repo, sha):
             return 400, {"error": "not a commit on main"}
+        if not fwrepo.clean_tree(self.repo, sha):
+            return 400, {"error": "not a bench commit"}
         got = fwrepo.show_src(self.repo, sha, SHOW_MAX_LINES)
         if got is None:
             return 400, {"error": "git show failed"}
@@ -293,6 +296,8 @@ class Endpoint:
             full = fwrepo.resolve_commit(self.repo, sha)
             if full is None or not fwrepo.on_main(self.repo, full):
                 return 400, {"error": "not a commit on main"}, "sha %s not on main" % sha
+            if not fwrepo.clean_tree(self.repo, full):
+                return 400, {"error": "not a bench commit"}, "sha %s not clean" % sha
             detail, arg = "run %s" % full[:12], full
         elif path == "/board/test":
             name = body.get("name") if isinstance(body, dict) else None

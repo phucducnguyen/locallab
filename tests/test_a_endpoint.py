@@ -55,7 +55,7 @@ def make_repo(path):
     return c1, c2, c3, blob
 
 
-class EndpointTest(unittest.TestCase):
+class EndpointBase(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         cls.tmpc = tempfile.TemporaryDirectory()
@@ -126,6 +126,9 @@ class EndpointTest(unittest.TestCase):
     def audit(self):
         return [dict(r) for r in self.conn.execute("SELECT * FROM endpoint_audit ORDER BY id")]
 
+
+
+class EndpointTest(EndpointBase):
     # ---- auth, routes, audit ----
     def test_health_open_says_not_stub_everything_else_needs_token(self):
         st, body = self.req("/health", token=None)
@@ -323,6 +326,74 @@ class EndpointTest(unittest.TestCase):
         self.assertEqual(self.req("/runs")[0], 200)    # reads still work
         os.remove(self.hold)
         self.assertEqual(self.req("/run", "POST", {"sha": self.c2})[0], 202)
+
+
+def make_history_repo(path):
+    """main keeps the original history: k1 holds key files, clean-up k2 removes them,
+    k3 is a normal commit. Names here are invented placeholders."""
+    os.makedirs(os.path.join(path, "src"))
+    os.makedirs(os.path.join(path, "logs"))
+    git(path, "init", "-q", "-b", "main")
+    for rel, text in (("CASES.md", "placeholder key\n"), ("logs/x.raw", "LW ALIVE 1\n"),
+                      ("src/a.c", "int a;\n")):
+        with open(os.path.join(path, rel), "w") as f:
+            f.write(text)
+    git(path, "add", "-A")
+    git(path, "commit", "-q", "-m", "keyed: placeholder case text")
+    k1 = git(path, "rev-parse", "HEAD")
+    git(path, "rm", "-q", "-r", "CASES.md", "logs")
+    git(path, "commit", "-q", "-m", "clean-up")
+    k2 = git(path, "rev-parse", "HEAD")
+    with open(os.path.join(path, "src", "a.c"), "w") as f:
+        f.write("int a = 1;\n")
+    git(path, "commit", "-q", "-am", "normal")
+    k3 = git(path, "rev-parse", "HEAD")
+    return k1, k2, k3
+
+
+class CleanTreeTest(EndpointBase):
+    """Only commits whose own tree has no CASES.md, logs/ or bugs/ are served or run."""
+
+    @classmethod
+    def setUpClass(cls):
+        EndpointBase.setUpClass()
+        cls.hrepo = os.path.join(cls.tmpc.name, "history")
+        cls.k1, cls.k2, cls.k3 = make_history_repo(cls.hrepo)
+
+    def setUp(self):
+        EndpointBase.setUp(self)
+        self.ep.repo = self.hrepo
+
+    def test_show_refuses_the_keyed_commit(self):
+        for ref in (self.k1, self.k1[:7]):
+            st, body = self.req("/show?ref=" + ref)
+            self.assertEqual(st, 400, ref)
+            self.assertNotIn("placeholder", json.dumps(body))
+        for ref in (self.k2, self.k3[:7]):
+            self.assertEqual(self.req("/show?ref=" + ref)[0], 200, ref)
+
+    def test_run_refuses_the_keyed_commit(self):
+        b = Bench(self.conn, "nucleo-1", log=lambda s: None)
+        t = self.now[0] - 5
+        b.apply(b.m.link_up(t), t)
+        self.assertEqual(self.req("/run", "POST", {"sha": self.k1[:7]})[0], 400)
+        self.assertEqual(self.conn.execute("SELECT COUNT(*) FROM bench_requests")
+                         .fetchone()[0], 0)
+        self.assertEqual(self.req("/run", "POST", {"sha": self.k3[:7]})[0], 202)
+
+    def test_case_insensitive_and_nested(self):
+        from bench import fwrepo
+        for rel in ("Bugs/n.txt", "src/LOGS/y.raw", "docs/cases.MD"):
+            d = os.path.join(self.tmp.name, "r-" + rel.replace("/", "_"))
+            os.makedirs(os.path.join(d, os.path.dirname(rel)))
+            git(d, "init", "-q", "-b", "main")
+            with open(os.path.join(d, rel), "w") as f:
+                f.write("x\n")
+            git(d, "add", "-A")
+            git(d, "commit", "-q", "-m", "x")
+            self.assertFalse(fwrepo.clean_tree(d, git(d, "rev-parse", "HEAD")), rel)
+        self.assertTrue(fwrepo.clean_tree(self.hrepo, self.k3))
+        self.assertFalse(fwrepo.clean_tree(self.hrepo, "--output=x"))
 
 
 class BridgeIpTest(unittest.TestCase):

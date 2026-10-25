@@ -68,6 +68,24 @@ def on_main(repo, sha):
     return rc == 0
 
 
+KEY_NAMES = ("cases.md", "logs", "bugs")
+
+
+def clean_tree(repo, sha):
+    """True only if the commit's own tree holds no CASES.md, logs/ or bugs/ at any depth
+    (case-insensitive). main keeps the original history, whose early trees hold the
+    answer key: nothing from such a commit, not even its message, is ever returned."""
+    rc, out = git(repo, "ls-tree", "-r", "-z", "--name-only", "--full-tree",
+                  "--end-of-options", sha)
+    if rc != 0:
+        return False
+    for path in out.split(b"\0"):
+        parts = path.decode("utf-8", "replace").lower().split("/")
+        if any(p in KEY_NAMES for p in parts):
+            return False
+    return True
+
+
 def subject(repo, sha):
     rc, out = git(repo, "log", "-1", "--format=%s", sha)
     return out.decode("utf-8", "replace").strip() if rc == 0 else None

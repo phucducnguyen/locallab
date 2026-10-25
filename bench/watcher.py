@@ -2,8 +2,8 @@
 
 Polls main of the bench repo ($LW_FW_REPO, ~/bench-fw) every 5 s. Any change
 of the head, a new commit or a move back, queues one bench_requests row
-"run <new head>" (source 'watcher') for the bench to flash and run. The last
-head seen is kept in watcher_state, so a restart triggers only on a real
+"run <new head>" (source 'watcher') for the bench to flash and run, but only if
+that commit's own tree is clean (no CASES.md, logs/ or bugs/). The last head seen is kept in watcher_state, so a restart triggers only on a real
 change. On its very first start it records the head and triggers nothing.
 
 It ignores the hold file on purpose: the accuracy loop holds the endpoint's
@@ -60,12 +60,15 @@ class Watcher:
             self.conn.execute("INSERT INTO watcher_state (repo, head, t) VALUES (?, ?, ?) "
                               "ON CONFLICT(repo) DO UPDATE SET head=excluded.head, t=excluded.t",
                               (self.repo, head, now))
-            if prev is None:
-                rid = None
-            else:
+            if prev is not None and fwrepo.clean_tree(self.repo, head):
                 rid = requests.add(self.conn, now, "watcher", "run", head)
-        if rid is None:
+            else:
+                rid = None
+        if prev is None:
             self.log("watcher: main is %s (first start, nothing queued)" % head[:12])
+        elif rid is None:
+            self.log("watcher: main moved to %s, not a bench commit (its tree is not clean); "
+                     "nothing queued" % head[:12])
         else:
             self.log("watcher: main moved %s -> %s, run queued (request %d)" % (
                 prev[:12], head[:12], rid))
