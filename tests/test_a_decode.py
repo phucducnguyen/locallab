@@ -198,8 +198,8 @@ class Addr2lineParsing(unittest.TestCase):
 TOOLS = ("arm-none-eabi-gcc", "arm-none-eabi-nm", "arm-none-eabi-addr2line", "make", "git")
 
 
-@unittest.skipUnless(all(shutil.which(t) for t in TOOLS) and os.path.isdir(FW),
-                     "no arm-none-eabi toolchain or no ../fw-public here")
+@unittest.skipUnless(all(shutil.which(t) for t in TOOLS) and os.path.isdir(os.path.join(FW, ".git")),
+                     "no arm-none-eabi toolchain or ../fw-public is not a git repo here")
 class Addr2lineRealElf(unittest.TestCase):
     """Build main from a git archive (sources unread), look up an nm address."""
 
