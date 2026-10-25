@@ -146,6 +146,33 @@ class Gen:
         self.t0 = clock.now() + rng.uniform(60, 7200)
         return clock
 
+    def health(self, clock, n, state, vdd=None):
+        """A HEALTH line, some with the optional vdd=<mV> temp=<C> fields."""
+        if vdd is None and self.rng.random() < 0.4:
+            vdd = self.rng.randint(3240, 3340)
+        if vdd is None:
+            return self.w.health(clock.now(), n, state)
+        temp = self.rng.randint(24, 48)
+        line = "LW HEALTH %d loopback=%s vdd=%d temp=%d" % (n, state, vdd, temp)
+        return self.w.serial(clock.now(), line, "HEALTH", n=n, loopback=state, vdd=vdd, temp=temp)
+
+    def dump(self, clock, bits):
+        """The one-time LW DUMP burst (reg, stack, cause, end) before the first HARDFAULT."""
+        rng = self.rng
+        cls = ("USAGEFAULT" if set(bits) & {"UNDEFINSTR", "NOCP", "INVPC", "UNALIGNED",
+                                             "DIVBYZERO"} else
+               "BUSFAULT" if set(bits) & {"IBUSERR", "PRECISERR", "IMPRECISERR", "STKERR"}
+               else "MEMMANAGE")
+        texts = ["LW DUMP reg " + " ".join("%s=0x%08x" % (r, rng.getrandbits(32))
+                                           for r in ("r0", "r1", "r2", "r3", "r12")),
+                 "LW DUMP stack " + " ".join("0x%08x" % rng.getrandbits(32) for _ in range(4)),
+                 "LW DUMP cause %s" % cls, "LW DUMP end"]
+        out = []
+        for t in texts:
+            clock.wait(0.01)
+            out.append(self.w.serial(clock.now(), t, "DUMP", part=t.split()[2]))
+        return out
+
     def file_line(self):
         name = self.rng.choice(("src/demo.c", "src/demo_io.c", "src/demo2.c", "src/demo_task.c",
                                 "src/demo_fifo.c"))
@@ -287,12 +314,12 @@ def v_stuck(g):
     g.pass_run()
     clock = g.clock()
     n = _health_n(g)
-    g.w.health(clock.now(), n, "OK")
+    g.health(clock, n, "OK")
     clock.wait(1.0)
-    first = g.w.health(clock.now(), n + 1, "STUCK")
+    first = g.health(clock, n + 1, "STUCK")
     t_first = clock.now()
     clock.wait(1.0)
-    second = g.w.health(clock.now(), n + 2, "STUCK")
+    second = g.health(clock, n + 2, "STUCK")
     reason = ("loopback=STUCK on 2 lines in a row on %s, which passed with loopback OK; "
               "no reflash since." % g.sha_pass)
     clock.wait(0.5)
@@ -312,7 +339,7 @@ def v_link_down(g):
     last = None
     for k in range(g.rng.randint(1, 4)):
         clock.wait(1.0)
-        last = g.w.health(clock.now(), n + k, "OK")
+        last = g.health(clock, n + k, "OK")
     clock.wait(g.rng.uniform(0.2, 0.9))
     port = "/dev/ttyACM%d" % g.rng.randint(0, 3)
     t_gone = clock.now()
@@ -340,6 +367,27 @@ def v_reboot_pin(g):
     return "incident", iid, None, ("HARDWARE", "REBOOT", None), "reset"
 
 
+def v_brownout(g):
+    g.pass_run()
+    clock = g.clock()
+    n = _health_n(g)
+    vdd = g.rng.randint(3250, 3330)
+    lines = []
+    for k in range(g.rng.randint(2, 4)):
+        clock.wait(1.0)
+        lines.append(g.health(clock, n + k, "OK", vdd=vdd))
+        vdd -= g.rng.randint(250, 450)
+    clock.wait(g.rng.uniform(0.2, 0.9))
+    boot = g.boot(clock, g.sha_pass, reset="BOR", csr="0x0a000000")
+    low = lines[-1]["line"].split("vdd=")[1].split()[0]
+    reason = ("BOOT with reset=BOR that the bench did not cause, after vdd=%s, on %s, which "
+              "passed; no reflash since." % (low, g.sha_pass))
+    ev = {"lines": lines[-2:] + [boot], "fields": {"reset": ["BOR"], "vdd": int(low)}}
+    iid = g.w.open_incident(clock.now(), "REBOOT", "HARDWARE", reason, ev, firmware=g.sha_pass,
+                            last_pass=g.last_pass(), t_first_bad=clock.now())
+    return "incident", iid, None, ("HARDWARE", "REBOOT", None), "power"
+
+
 def _new_run_start(g):
     g.pass_run()
     clock = g.clock()
@@ -355,6 +403,8 @@ def v_hardfault(g):
     lines = [boot] + g.tests(clock, SELF_TESTS[:k])
     regs, bits = g.regs()
     hf = "LW HARDFAULT " + " ".join("%s=%s" % kv for kv in regs.items())
+    if g.rng.random() < 0.5:
+        lines += g.dump(clock, bits)
     clock.wait(0.05)
     first = g.w.serial(clock.now(), hf, "HARDFAULT", **regs)
     t_first = clock.now()
@@ -487,7 +537,7 @@ def v_run_pass(g):
 
 
 VARIANTS = {"jumper": v_jumper, "recover": v_recover, "flap": v_flap, "stuck": v_stuck,
-            "link_down": v_link_down, "reboot_pin": v_reboot_pin, "hardfault": v_hardfault,
+            "link_down": v_link_down, "brownout": v_brownout, "reboot_pin": v_reboot_pin, "hardfault": v_hardfault,
             "run_fail_code": v_run_fail_code, "loopback_unknown": v_loopback_unknown,
             "silent_unknown": v_silent_unknown, "silent_code": v_silent_code,
             "silent_hw": v_silent_hw, "run_unknown": v_run_unknown, "run_pass": v_run_pass}
