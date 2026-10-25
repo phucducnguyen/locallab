@@ -39,6 +39,17 @@ incident while the bench is flashing (the board re-enumerates). After a
 verified BOOT the run is captured until RESULT, the first HARDFAULT (the
 bench keeps 3 s more of lines) or 15 s.
 
+Further devices (firmware grammar v2; an absent field is unknown, never OK
+and never bad): sensor (A2-A3) and radio (A4-A5) follow the loopback's
+HEALTH_FAIL rule with their own counters and incident key (kind, device);
+facts carry device, pins and pin_in. ESTOP opens on the first estop=ON line
+(an operator action) and resolves on estop=OFF. Power (device "power",
+kind HEALTH_FAIL) opens on vdd < 3000 mV on 2 lines in a row or a BOOT with
+BOR in reset=, and resolves after 3 lines with vdd >= 3000. last_power keeps
+the latest vdd/temp; each incident's facts and evidence get it as "power". A
+HARDFAULT record's "dump" (when present) goes into facts and evidence.
+Machine.extras(inc) gives the top-level evidence keys for the bench to merge.
+
 Resolve alerts are held for the flap window (60 s) after the close, so a
 flapping incident gets one resolve alert at its real end (the record itself
 is RESOLVED at once).
@@ -60,7 +71,19 @@ LINK_DOWN = "LINK_DOWN"
 REBOOT = "REBOOT"
 HARDFAULT = "HARDFAULT"
 RUN_FAIL = "RUN_FAIL"
-KINDS = (HEALTH_FAIL, SILENT, LINK_DOWN, REBOOT, HARDFAULT, RUN_FAIL)
+ESTOP = "ESTOP"
+KINDS = (HEALTH_FAIL, SILENT, LINK_DOWN, REBOOT, HARDFAULT, RUN_FAIL, ESTOP)
+
+# Further HEALTH devices (firmware grammar v2). Each gets its own incident,
+# keyed (kind, device) on this board; the loopback keeps the bare HEALTH_FAIL
+# key. A0-A1 is the loopback (PA0 out, PA1 in).
+LINKS = {
+    "sensor": {"pins": "A2-A3", "pin_out": "PA4", "pin_in": "PB0", "in_label": "A3"},
+    "radio": {"pins": "A4-A5", "pin_out": "PC1", "pin_in": "PC0", "in_label": "A5"},
+}
+POWER = "power"
+VDD_MIN_MV = 3000
+ESTOP_PIN = {"button": "B1", "pin_in": "PC13"}
 
 OPEN_AFTER = 2          # non-OK HEALTH lines in a row
 RESOLVE_AFTER = 3       # OK HEALTH lines in a row
@@ -85,6 +108,11 @@ def sha_match(fw, sha):
     return n >= 7 and fw[:n] == sha[:n]
 
 
+def slot_of(kind, device=None):
+    """The machine's key: (kind, device) for sensor, radio and power, else the bare kind."""
+    return (kind, device) if (device in LINKS or device == POWER) else kind
+
+
 class Incident:
     def __init__(self, key, board, kind, t, t_first_bad, cite, facts=None):
         self.key = key
@@ -106,6 +134,15 @@ class Incident:
         self.run = None
         self.db_id = None
         self.evidence = {}
+
+    @property
+    def device(self):
+        return self.facts.get("device")
+
+    @property
+    def slot(self):
+        """The machine's key for this incident: kind, or (kind, device) for a device."""
+        return slot_of(self.kind, self.facts.get("device"))
 
     def cite(self, c):
         if c and len(self.cites) < MAX_CITES:
@@ -142,6 +179,11 @@ class Machine:
         self.verified_sha = None
         self.expect = None      # {"sha", "deadline", "discarded", "t"}
         self.run = None         # the bench run in progress
+        self.dev_bad = {d: [] for d in LINKS}   # device -> [(t, cite, state)] in a row
+        self.dev_ok = {d: 0 for d in LINKS}     # device -> OK lines in a row
+        self.low_run = []       # HEALTH lines in a row with vdd < VDD_MIN_MV
+        self.vdd_ok = 0         # HEALTH lines in a row with vdd >= VDD_MIN_MV
+        self.last_power = {"vdd": None, "temp": None, "t": None, "cite": None}
 
     # ---- helpers ----
     def can_send(self):
@@ -151,10 +193,27 @@ class Machine:
     def _in_replug(self, t):
         return self.link_back_at is not None and t - self.link_back_at <= self.replug_s
 
-    def _open(self, t, kind, cite, t_first_bad=None, facts=None, run=None):
-        if kind in self.active:
+    def _power_snapshot(self):
+        return dict(self.last_power) if self.last_power["t"] is not None else None
+
+    def extras(self, inc):
+        """Top-level evidence keys for inc (device, pins, pin_in, power, dump), for run.py."""
+        out = {k: inc.facts[k] for k in ("device", "pins", "pin_in", "dump") if k in inc.facts}
+        if inc.facts.get("power"):
+            out["power"] = inc.facts["power"]
+        return out
+
+    def _stamp(self, inc):
+        p = self._power_snapshot()
+        if p is not None:
+            inc.facts["power"] = p
+        inc.evidence.update(self.extras(inc))
+
+    def _open(self, t, kind, cite, t_first_bad=None, facts=None, run=None, key=None):
+        key = kind if key is None else key
+        if key in self.active:
             return []
-        prev = self.recent.get(kind)
+        prev = self.recent.get(key)
         if (prev is not None and prev.state == "RESOLVED" and prev.closed is not None
                 and t - prev.closed <= self.flap_s):
             prev.state = "FLAPPING"
@@ -164,7 +223,8 @@ class Machine:
             prev.cite(cite)
             if facts:
                 prev.facts.update(facts)
-            self.active[kind] = prev
+            self._stamp(prev)
+            self.active[key] = prev
             alert = prev.last_flap_alert is None or t - prev.last_flap_alert >= self.flap_s
             if alert:
                 prev.last_flap_alert = t
@@ -174,15 +234,17 @@ class Machine:
         inc = Incident(self._next_key, self.board, kind, t,
                        t if t_first_bad is None else t_first_bad, cite, facts)
         inc.run = run
+        self._stamp(inc)
         self._next_key += 1
-        self.active[kind] = inc
-        self.recent[kind] = inc
+        self.active[key] = inc
+        self.recent[key] = inc
         return [{"type": "open", "inc": inc, "t": t, "cite": cite}]
 
-    def _resolve(self, t, kind, cite=None):
-        inc = self.active.pop(kind, None)
+    def _resolve(self, t, kind, cite=None, key=None):
+        inc = self.active.pop(kind if key is None else key, None)
         if inc is None:
             return []
+        self._stamp(inc)
         inc.state = "RESOLVED"
         inc.closed = t
         inc.cite(cite)
@@ -204,9 +266,9 @@ class Machine:
         """Put back an incident loaded from the DB (a bench restart)."""
         inc.key = self._next_key
         self._next_key += 1
-        self.recent[inc.kind] = inc
+        self.recent[inc.slot] = inc
         if inc.state != "RESOLVED":
-            self.active[inc.kind] = inc
+            self.active[inc.slot] = inc
             if inc.kind == LINK_DOWN:
                 # killed while the port was gone: the next link_up resolves it
                 self.link = False
@@ -326,6 +388,9 @@ class Machine:
         self.link = False
         self.bad_run = []
         self.ok_run = 0
+        self._reset_devices()
+        self.low_run = []
+        self.vdd_ok = 0
         self.seen_result = self.seen_alive = False
         if self.run is not None:
             run = self._end_run(t, "ABORTED")
@@ -361,6 +426,10 @@ class Machine:
                     self.seen_alive = True
             else:
                 out += self._health(t, rec, cite)
+                out += self._power(t, rec, cite)
+                for d in LINKS:
+                    out += self._device(t, d, rec, cite)
+                out += self._estop(t, rec, cite)
         elif kind == "TEST":
             if self.run is not None and rec.get("name"):
                 self.run["tests"][rec["name"]] = rec.get("status")
@@ -438,11 +507,18 @@ class Machine:
         self.boot_since_n = True
         self.bad_run = []
         self.ok_run = 0
+        self._reset_devices()
+
+    def _reset_devices(self):
+        self.dev_bad = {d: [] for d in LINKS}
+        self.dev_ok = {d: 0 for d in LINKS}
 
     def _boot(self, t, rec, cite):
         out = []
         self._reset_boot_state()
         out += self._resolve(t, HARDFAULT, cite)
+        if "BOR" in (rec.get("reset") or []):
+            out += self._power_open(t, cite, t, {"cause": "BOR", "reset": rec.get("reset")})
         fw = rec.get("fw")
         if self.verified_sha and not sha_match(fw, self.verified_sha):
             out.append({"type": "log", "what": "UNVERIFIED", "t": t, "was": self.verified_sha,
@@ -531,13 +607,115 @@ class Machine:
         if self.run is not None:
             run = self._end_run(t, "HARDFAULT", cite)
             out.append({"type": "run_end", "run": run, "t": t})
+        dump = rec.get("dump")
         inc = self.active.get(HARDFAULT)
         if inc is not None:
             inc.repeats += 1
             if len(inc.cites) < 3:
                 inc.cite(cite)
+            if dump:
+                inc.facts["dump"] = dump
+                inc.evidence["dump"] = dump
             return out
-        out += self._open(t, HARDFAULT, cite, facts={"fault": fields,
-                                                     "partial": bool(rec.get("partial"))},
-                          run=run)
+        facts = {"fault": fields, "partial": bool(rec.get("partial"))}
+        if dump:
+            facts["dump"] = dump   # only when present: a flap keeps an earlier dump
+        out += self._open(t, HARDFAULT, cite, facts=facts, run=run)
         return out
+
+    # ---- further devices (grammar v2; an absent field is unknown and counts for nothing) ----
+    def _device(self, t, dev, rec, cite):
+        out = []
+        st = rec.get(dev)
+        key = (HEALTH_FAIL, dev)
+        if st == "OK":
+            self.dev_bad[dev] = []
+            self.dev_ok[dev] += 1
+            if self.dev_ok[dev] >= RESOLVE_AFTER:
+                out += self._resolve(t, HEALTH_FAIL, cite, key=key)
+        elif st in ("OPEN", "STUCK"):
+            self.dev_ok[dev] = 0
+            run = self.dev_bad[dev]
+            run.append((t, cite, st))
+            inc = self.active.get(key)
+            if inc is not None:
+                inc.cite(cite)
+                inc.repeats += 1
+                inc.facts[dev] = (inc.facts.get(dev) or [])[-(OPEN_AFTER - 1):] + [st]
+            elif len(run) >= OPEN_AFTER:
+                first_t, first_cite, _ = run[-OPEN_AFTER]
+                facts = {"device": dev, "board": self.board}
+                facts.update(LINKS[dev])
+                facts[dev] = [b[2] for b in run[-OPEN_AFTER:]]
+                facts["state"] = st
+                facts["lines"] = [b[1]["line"] for b in run[-OPEN_AFTER:] if b[1]]
+                opened = self._open(t, HEALTH_FAIL, first_cite, t_first_bad=first_t,
+                                    facts=facts, key=key)
+                for o in opened:
+                    o["inc"].cite(cite)
+                    o["cite"] = first_cite
+                out += opened
+        return out
+
+    def _power_open(self, t, cite, t_first_bad, facts):
+        key = (HEALTH_FAIL, POWER)
+        inc = self.active.get(key)
+        if inc is not None:
+            inc.cite(cite)
+            inc.repeats += 1
+            return []
+        self.vdd_ok = 0
+        f = {"device": POWER, "board": self.board, "vdd_min_mv": VDD_MIN_MV}
+        f.update(facts)
+        return self._open(t, HEALTH_FAIL, cite, t_first_bad=t_first_bad, facts=f, key=key)
+
+    def _power(self, t, rec, cite):
+        out = []
+        vdd, temp = rec.get("vdd"), rec.get("temp")
+        if vdd is not None:
+            self.last_power["vdd"] = vdd
+        if temp is not None:
+            self.last_power["temp"] = temp
+        if vdd is not None or temp is not None:
+            self.last_power["t"] = t
+            self.last_power["cite"] = cite
+        if vdd is None:
+            return out
+        key = (HEALTH_FAIL, POWER)
+        if vdd < VDD_MIN_MV:
+            self.vdd_ok = 0
+            self.low_run.append((t, cite, vdd))
+            if key in self.active:
+                self.active[key].cite(cite)
+                self.active[key].repeats += 1
+            elif len(self.low_run) >= OPEN_AFTER:
+                first_t, first_cite, _ = self.low_run[-OPEN_AFTER]
+                opened = self._power_open(t, first_cite, first_t, {
+                    "cause": "VDD_LOW", "vdd": [b[2] for b in self.low_run[-OPEN_AFTER:]],
+                    "lines": [b[1]["line"] for b in self.low_run[-OPEN_AFTER:] if b[1]]})
+                for o in opened:
+                    o["inc"].cite(cite)
+                    o["cite"] = first_cite
+                out += opened
+        else:
+            self.low_run = []
+            self.vdd_ok += 1
+            if self.vdd_ok >= RESOLVE_AFTER:
+                out += self._resolve(t, HEALTH_FAIL, cite, key=key)
+        return out
+
+    def _estop(self, t, rec, cite):
+        st = rec.get("estop")
+        if st == "ON":
+            inc = self.active.get(ESTOP)
+            if inc is not None:
+                inc.repeats += 1
+                if len(inc.cites) < 3:
+                    inc.cite(cite)
+                return []
+            facts = {"device": "estop", "board": self.board, "operator_action": True}
+            facts.update(ESTOP_PIN)
+            return self._open(t, ESTOP, cite, facts=facts)
+        if st == "OFF":
+            return self._resolve(t, ESTOP, cite)
+        return []
