@@ -191,11 +191,11 @@ class LiveScenarioTest(Base):
         with c:
             c.execute("INSERT INTO alerts (incident_id, transition, text, created, sent) "
                       "VALUES (?, 'explain', ?, ?, ?)",
-                      (inc["id"], "LAB WATCH incident %d explanation\nDIAGNOSIS: x" % inc["id"],
+                      (inc["id"], "LOCAL LAB incident %d explanation\nDIAGNOSIS: x" % inc["id"],
                        t0 + 9.0, t0 + 12.34))
             c.execute("INSERT INTO alerts (incident_id, transition, text, created, sent) "
                       "VALUES (?, 'fix', ?, ?, ?)",
-                      (inc["id"], "LAB WATCH incident %d fix PR #7" % inc["id"], t0 + 80.0,
+                      (inc["id"], "LOCAL LAB incident %d fix PR #7" % inc["id"], t0 + 80.0,
                        t0 + 81.25))
         c.close()
         f = self.frame()
@@ -203,7 +203,7 @@ class LiveScenarioTest(Base):
         self.assertIn("alert %s" % fmt(inc["t_alert_sent"] - t0), row)
         self.assertIn("explain +12.3 s", row)
         self.assertIn("fix PR +81.2 s", row)
-        self.assertIn("LAB WATCH incident %d fix PR #7" % inc["id"],
+        self.assertIn("LOCAL LAB incident %d fix PR #7" % inc["id"],
                       f.split("LAST TELEGRAM SENT", 1)[1])
 
     def test_decode_keys_read_defensively(self):
@@ -384,7 +384,7 @@ class PtyTest(Base):
         make_db.build(self.db)
         pid, fd = self.spawn("--no-color")
         try:
-            _, seen = self.read_until(fd, b"LAB WATCH", 5.0)
+            _, seen = self.read_until(fd, b"LOCAL LAB", 5.0)
             self.assertIsNotNone(seen)
             os.write(fd, b"\x03")
             self.assertEqual(self.wait_exit(pid), 0)

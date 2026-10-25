@@ -69,7 +69,7 @@ Conventions in those tables:
 
 ## Alerts (the bench's fixed wording)
 
-    LAB WATCH incident <id> OPEN            (or: RESOLVED after <n> s / FLAPPING (<n> flaps))
+    LOCAL LAB incident <id> OPEN            (or: RESOLVED after <n> s / FLAPPING (<n> flaps))
     Board: <board>
     Kind: <kind>
     Triage: <triage>

@@ -9,10 +9,10 @@ so a sent row is never sent again). If Telegram is unreachable the row stays
 unsent and is retried with a short backoff. It never calls getUpdates.
 
 Watcher health (lane A item 10): if the bench's heartbeat is older than 10 s
-it posts "Lab Watch is blind: bench down since T" once per outage. When the
+it posts "Local Lab is blind: bench down since T" once per outage. When the
 bench has logged LINK_DOWN (the USB port gone) and no LINK_UP for 10 s it
-posts "Lab Watch is not watching bench-1: link down since T" once, and on
-the LINK_UP after it "Lab Watch: bench-1 link back after N s" once. Each is
+posts "Local Lab is not watching bench-1: link down since T" once, and on
+the LINK_UP after it "Local Lab: bench-1 link back after N s" once. Each is
 keyed in watcher_posts, so a restarted sender never posts it again.
 
 The token and chat id are read from files in the secrets dir
@@ -134,7 +134,7 @@ class Sender:
         hb = self.conn.execute("SELECT t FROM heartbeat WHERE id=1").fetchone()
         if hb is None or now - hb["t"] <= self.blind_after:
             return
-        text = "Lab Watch is blind: bench down since %s UTC" % wall_ts(hb["t"])
+        text = "Local Lab is blind: bench down since %s UTC" % wall_ts(hb["t"])
         self.conn.execute("INSERT OR IGNORE INTO watcher_posts (key, text, created) "
                           "VALUES (?, ?, ?)", ("blind-%.3f" % hb["t"], text, now))
         self.conn.commit()
@@ -161,10 +161,10 @@ class Sender:
                 "SELECT 1 FROM watcher_posts WHERE key=?", (key,)).fetchone():
             return  # an old outage from before this sender ran: history, not news
         self._watcher_post(key,
-                           "Lab Watch is not watching %s: link down since %s UTC"
+                           "Local Lab is not watching %s: link down since %s UTC"
                            % (BENCH_NAME, wall_ts(down["t_wall"])), now)
         if up is not None:
-            self._watcher_post("linkup-%d" % down["id"], "Lab Watch: %s link back after %d s"
+            self._watcher_post("linkup-%d" % down["id"], "Local Lab: %s link back after %d s"
                                % (BENCH_NAME, round(up["t_wall"] - down["t_wall"])), now)
 
     def step(self):

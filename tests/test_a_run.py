@@ -106,7 +106,7 @@ class TestJumper(unittest.TestCase):
         alerts = r.rows("SELECT * FROM alerts")
         self.assertEqual([a["transition"] for a in alerts], ["open"])
         text = alerts[0]["text"].splitlines()
-        self.assertEqual(text[0], "LAB WATCH incident %d OPEN" % inc["id"])
+        self.assertEqual(text[0], "LOCAL LAB incident %d OPEN" % inc["id"])
         self.assertEqual(text[1:5], ["Board: nucleo-1", "Kind: HEALTH_FAIL", "Triage: HARDWARE",
                                      "Routed to: Hardware team"])
         self.assertTrue(text[5].startswith("Reason: "))
@@ -145,7 +145,7 @@ class TestJumper(unittest.TestCase):
         r.bench.tick(80)
         res = r.rows("SELECT * FROM alerts WHERE transition='resolve'")
         self.assertEqual(len(res), 1)
-        self.assertTrue(res[0]["text"].startswith("LAB WATCH incident %d RESOLVED after 9 s"
+        self.assertTrue(res[0]["text"].startswith("LOCAL LAB incident %d RESOLVED after 9 s"
                                                   % inc[0]["id"]))
         self.assertEqual(res[0]["reply_to_alert_id"], alerts[0]["id"])
         kinds = [e["kind"] for e in r.rows("SELECT kind FROM events")]
@@ -202,7 +202,7 @@ class TestJumper(unittest.TestCase):
         trans = [a["transition"] for a in r.rows("SELECT transition FROM alerts ORDER BY id")]
         self.assertEqual(trans, ["open", "flap-1", "resolve"])
         flap = r.rows("SELECT * FROM alerts WHERE transition='flap-1'")[0]
-        self.assertTrue(flap["text"].startswith("LAB WATCH incident %d FLAPPING (1 flaps)"
+        self.assertTrue(flap["text"].startswith("LOCAL LAB incident %d FLAPPING (1 flaps)"
                                                 % inc[0]["id"]))
         self.assertEqual(len(r.rows("SELECT * FROM routing")), 1)
 
@@ -374,7 +374,7 @@ class TestExplainWorker(unittest.TestCase):
             opened = self.r.rows("SELECT id FROM alerts WHERE incident_id=? AND "
                                  "transition='open'", iid)[0]["id"]
             self.assertEqual(row["reply_to_alert_id"], opened)
-            self.assertTrue(row["text"].startswith("LAB WATCH incident %d explanation" % iid))
+            self.assertTrue(row["text"].startswith("LOCAL LAB incident %d explanation" % iid))
             self.assertIn("DIAGNOSIS: HARDWARE", row["text"])
             self.assertIn("incident %d" % iid, row["text"])
             self.assertTrue(row["text"].endswith("Incident: %d" % iid))

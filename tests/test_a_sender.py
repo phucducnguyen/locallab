@@ -131,7 +131,7 @@ class TestSender(Base):
         path, body = self.tg.requests[0]
         self.assertEqual(path, "/bot%s/sendMessage" % FAKE_TOKEN)
         self.assertEqual(body["chat_id"], FAKE_CHAT)
-        self.assertTrue(body["text"].startswith("LAB WATCH incident 1 OPEN"))
+        self.assertTrue(body["text"].startswith("LOCAL LAB incident 1 OPEN"))
         self.assertNotIn("parse_mode", body)
         a = self.alerts()[0]
         self.assertEqual(a["telegram_message_id"], 101)
@@ -145,13 +145,13 @@ class TestSender(Base):
         self.assertEqual(s2.step(), 0)
         self.assertEqual(len(self.tg.requests), 1)
         out = self.out.getvalue()
-        self.assertEqual(out.count("LAB WATCH incident 1 OPEN"), 1)
+        self.assertEqual(out.count("LOCAL LAB incident 1 OPEN"), 1)
         self.assertNotIn(FAKE_TOKEN, out)
         self.assertNotIn("FAKE-token", out)
 
     def test_reply_waits_for_parent_and_uses_its_message_id(self):
         b, inc = self.open_incident()
-        store.add_alert(self.conn, inc["id"], "explain", "LAB WATCH incident 1 explanation", 1.0)
+        store.add_alert(self.conn, inc["id"], "explain", "LOCAL LAB incident 1 explanation", 1.0)
         self.conn.commit()
         self.tg.fail_with = 502
         s = self.sender(self.tg.base)
@@ -209,12 +209,12 @@ class TestSender(Base):
         s.step()
         texts = [b["text"] for _, b in self.tg.requests]
         self.assertEqual(len(texts), 1)
-        self.assertTrue(texts[0].startswith("Lab Watch is blind: bench down since "))
+        self.assertTrue(texts[0].startswith("Local Lab is blind: bench down since "))
         store.heartbeat(self.conn, 1030.0)   # the bench came back, then died again
         now[0] = 1050.0
         s.step()
         self.assertEqual(len(self.tg.requests), 2)
-        self.assertEqual(self.out.getvalue().count("WATCHER Lab Watch is blind"), 2)
+        self.assertEqual(self.out.getvalue().count("WATCHER Local Lab is blind"), 2)
 
 
 class TestUnreachable(Base):
@@ -228,7 +228,7 @@ class TestUnreachable(Base):
         a = self.alerts()[0]
         self.assertIsNone(a["sent"])
         out = self.out.getvalue()
-        self.assertEqual(out.count("LAB WATCH incident 1 OPEN"), 1)   # console has it already
+        self.assertEqual(out.count("LOCAL LAB incident 1 OPEN"), 1)   # console has it already
         self.assertIn("unreachable", out)
         self.assertNotIn(FAKE_TOKEN, out)
         self.assertNotIn("127.0.0.1", out)
@@ -241,7 +241,7 @@ class TestUnreachable(Base):
             s2 = self.sender(tg.base)
             s2.step()
             self.assertEqual(len(tg.requests), 1)
-            self.assertEqual(self.out.getvalue().count("LAB WATCH incident 1 OPEN"), 1)
+            self.assertEqual(self.out.getvalue().count("LOCAL LAB incident 1 OPEN"), 1)
         finally:
             tg.close()
 

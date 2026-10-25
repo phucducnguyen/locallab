@@ -179,8 +179,8 @@ def _judge(original, sha, lp, prior, cap, err, t):
 
 def confirm_alert_text(iid, inc, res):
     """Fixed wording of the "confirmed" alert (a reply to the incident's open alert)."""
-    head = ("LAB WATCH incident %d CONFIRMED %s" % (iid, res.triage) if res.status == "CONFIRMED"
-            else "LAB WATCH incident %d NOT CONFIRMED, triage stays UNKNOWN" % iid)
+    head = ("LOCAL LAB incident %d CONFIRMED %s" % (iid, res.triage) if res.status == "CONFIRMED"
+            else "LOCAL LAB incident %d NOT CONFIRMED, triage stays UNKNOWN" % iid)
     ret = {True: "yes", False: "no", None: "unknown"}[res.output_returned]
     return "\n".join([
         head,

@@ -244,7 +244,7 @@ def frame(st, serial_lines, serial_note, width, height, now):
     boards = ",".join(clean(b, 20) for b in st.get("boards") or []) or "-"
     status = ("FAULT: %d open incident%s" % (n_open, "" if n_open == 1 else "s")
               if n_open else "ALL CLEAR")
-    top.append((" LAB WATCH  %s  |  %s  |  board %s  |  %s" % (status, clock, boards, hb_s),
+    top.append((" LOCAL LAB  %s  |  %s  |  board %s  |  %s" % (status, clock, boards, hb_s),
                 "head_bad" if n_open else "head_ok"))
     if st.get("error"):
         top.append(("! " + clean(st["error"], 200), "bad"))

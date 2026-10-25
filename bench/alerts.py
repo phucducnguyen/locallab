@@ -22,11 +22,11 @@ def alert_text(transition, inc, cite=None):
     """The fixed wording for open, resolve and flap-<n>; inc is an incidents row or dict."""
     iid = _get(inc, "id")
     if transition == "open":
-        head = "LAB WATCH incident %d OPEN" % iid
+        head = "LOCAL LAB incident %d OPEN" % iid
     elif transition == "resolve":
-        head = "LAB WATCH incident %d RESOLVED after %.0f s" % (iid, _get(inc, "duration_s") or 0)
+        head = "LOCAL LAB incident %d RESOLVED after %.0f s" % (iid, _get(inc, "duration_s") or 0)
     elif transition.startswith("flap-"):
-        head = "LAB WATCH incident %d FLAPPING (%d flaps)" % (iid, _get(inc, "flaps") or 0)
+        head = "LOCAL LAB incident %d FLAPPING (%d flaps)" % (iid, _get(inc, "flaps") or 0)
     else:
         raise ValueError(transition)
     out = [head,
@@ -52,7 +52,7 @@ def alert_text(transition, inc, cite=None):
 
 
 def diag_text(iid, cmd, cites, timeout_s):
-    out = ["LAB WATCH incident %d diagnostic" % iid, "Sent: %s" % cmd]
+    out = ["LOCAL LAB incident %d diagnostic" % iid, "Sent: %s" % cmd]
     if cites:
         out += ["Reply: [%s] %s" % (c["raw_ts"], c["line"]) for c in cites]
     else:
@@ -66,7 +66,7 @@ UNAVAILABLE = "explanation unavailable; triage stands"
 
 def explain_text(iid, text=None):
     body = (text or "").strip() or UNAVAILABLE
-    head = "LAB WATCH incident %d explanation" % iid
+    head = "LOCAL LAB incident %d explanation" % iid
     tail = "Incident: %d" % iid
     room = TEXT_MAX - len(head) - len(tail) - 2
     if len(body) > room:
