@@ -21,6 +21,13 @@ otherwise), check_citations' uncited sentences and unresolved citations,
 "I can't tell", latency and tokens per second. The output dir (outside the
 repo) gets trials.jsonl, summary.json, summary.txt and config.json.
 
+Notes from the first GB10 runs (2026-10-25): the model thinks unless told
+not to, so --think off (the default) sends enable_thinking=false; vLLM's
+aggregate output stayed near 150 tok/s from concurrency 4 to 32, so more
+threads only add latency; the vLLM server is shared with live board tests,
+so keep --concurrency at 8 or less and let ~/lw-sim/PAUSE hold the run.
+It never reads recorded board logs: only the invented records below.
+
 Every value here is invented for the simulation; nothing comes from the
 firmware repo, its logs or any answer key.
 """
