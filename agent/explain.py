@@ -39,7 +39,7 @@ REPLY_MAX = 64 * 1024
 TRIAGES = ("HARDWARE", "CODE", "UNKNOWN", "NONE")
 VERDICTS = ("PASS", "FAIL", "HARDFAULT", "RESET_LOOP", "NO_OUTPUT", "GARBLED", "FLASH_ERROR",
             "BUILD_ERROR")
-KINDS = ("HEALTH_FAIL", "SILENT", "LINK_DOWN", "REBOOT", "HARDFAULT", "RUN_FAIL")
+KINDS = ("HEALTH_FAIL", "SILENT", "LINK_DOWN", "REBOOT", "HARDFAULT", "RUN_FAIL", "ESTOP")
 DIAGNOSIS_RE = re.compile(
     r"DIAGNOSIS: (?P<diagnosis>%s) \| VERDICT: (?P<verdict>%s) \| "
     r"COMMIT: (?P<commit>[0-9a-f]{7,40}|none) \| CAUSE: (?P<cause>[A-Za-z0-9_-]+)"
