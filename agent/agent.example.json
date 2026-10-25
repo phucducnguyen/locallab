@@ -1,0 +1,7 @@
+{
+  "agent_cmd": ["<agent CLI from docs/gb10-help.txt>", "<its one-turn subcommand>",
+                "<its session-id flag>", "{session}", "<its message flag>", "{message}"],
+  "timeout_s": 55,
+  "session_prefix": "lw-",
+  "prompt": "Use the labwatch skill. Explain Lab Watch {kind} {id}: fetch that record with the skill's client and follow the skill's rules. End with the DIAGNOSIS line."
+}
