@@ -178,20 +178,24 @@ def _judge(original, sha, lp, prior, cap, err, t):
 
 
 def confirm_alert_text(iid, inc, res):
-    """Fixed wording of the "confirmed" alert (a reply to the incident's open alert)."""
-    head = ("LOCAL LAB incident %d CONFIRMED %s" % (iid, res.triage) if res.status == "CONFIRMED"
-            else "LOCAL LAB incident %d NOT CONFIRMED, triage stays UNKNOWN" % iid)
+    """Fixed wording of the "confirmed" alert (a reply to the incident's open alert): 2 lines."""
+    from bench.alerts import board_name, trim
+    b = board_name(_get(inc, "board", "?"))
+    plain = {"CODE": "it is the code, not the board", "HARDWARE": "it is the board, not the code"}
+    if res.status == "CONFIRMED":
+        head = "✔ Confirmed by reflashing the last good firmware on %s (#%d): %s." % (
+            b, iid, plain.get(res.triage, res.triage))
+    else:
+        head = ("✖ The reflash check on %s could not decide (#%d); triage stays UNKNOWN."
+                % (b, iid))
     ret = {True: "yes", False: "no", None: "unknown"}[res.output_returned]
     return "\n".join([
         head,
-        "Board: %s" % _get(inc, "board", "?"),
-        "Kind: %s" % _get(inc, "kind", "?"),
-        "Triage: %s -> %s" % (res.prior_triage, res.triage),
-        "Routed to: %s" % (res.route or "none"),
-        "Reason: %s" % res.reason,
-        "Reflash: %s -> %s, output returned: %s" % (res.last_pass_sha or "none",
-                                                    res.reflash_verdict or "not run", ret),
-        "Incident: %d" % iid])
+        "Who: %s" % (res.route or "none"),
+        "Details: triage %s → %s · reflash %s → %s, output returned %s · %s · #%d" % (
+            res.prior_triage, res.triage, res.last_pass_sha or "none",
+            res.reflash_verdict or "not run", ret, _get(inc, "board", "?"), iid),
+        "Why: " + trim(res.reason, 140)])
 
 
 def _merge_evidence(raw, res):

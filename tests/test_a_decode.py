@@ -185,14 +185,10 @@ class Addr2lineParsing(unittest.TestCase):
         inc = {"id": 7, "board": "nucleo-1", "kind": "HARDFAULT", "triage": "CODE",
                "route": "Firmware team", "reason": "r", "evidence": json.dumps(ev)}
         text = alerts.alert_text("open", inc, {"raw_ts": "12:00:00.000", "line": "LW HARDFAULT"})
-        self.assertIn("Fault: HFSR FORCED; UFSR UNDEFINSTR", text)
-        self.assertIn("in widget_poll()", text)
-        self.assertIn("File: src/widget.c:42", text)
-        lines = text.splitlines()
-        self.assertLess(lines.index([x for x in lines if x.startswith("Fault:")][0]),
-                        lines.index("File: src/widget.c:42"))
+        self.assertIn("HardFault at src/widget.c:42 · HFSR FORCED; UFSR UNDEFINSTR "
+                      "in widget_poll()", text)
         inc["evidence"] = "{}"
-        self.assertNotIn("Fault:", alerts.alert_text("open", inc))
+        self.assertIn("HardFault (no file:line)", alerts.alert_text("open", inc))
 
 
 TOOLS = ("arm-none-eabi-gcc", "arm-none-eabi-nm", "arm-none-eabi-addr2line", "make", "git")

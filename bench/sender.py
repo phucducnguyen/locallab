@@ -134,7 +134,7 @@ class Sender:
         hb = self.conn.execute("SELECT t FROM heartbeat WHERE id=1").fetchone()
         if hb is None or now - hb["t"] <= self.blind_after:
             return
-        text = "Local Lab is blind: bench down since %s UTC" % wall_ts(hb["t"])
+        text = "⚠️ Local Lab is blind: bench down since %s UTC" % wall_ts(hb["t"])
         self.conn.execute("INSERT OR IGNORE INTO watcher_posts (key, text, created) "
                           "VALUES (?, ?, ?)", ("blind-%.3f" % hb["t"], text, now))
         self.conn.commit()
@@ -161,10 +161,10 @@ class Sender:
                 "SELECT 1 FROM watcher_posts WHERE key=?", (key,)).fetchone():
             return  # an old outage from before this sender ran: history, not news
         self._watcher_post(key,
-                           "Local Lab is not watching %s: link down since %s UTC"
+                           "⚠️ Local Lab is not watching %s: link down since %s UTC"
                            % (BENCH_NAME, wall_ts(down["t_wall"])), now)
         if up is not None:
-            self._watcher_post("linkup-%d" % down["id"], "Local Lab: %s link back after %d s"
+            self._watcher_post("linkup-%d" % down["id"], "⚠️ Local Lab: %s link back after %d s"
                                % (BENCH_NAME, round(up["t_wall"] - down["t_wall"])), now)
 
     def step(self):
