@@ -1,0 +1,6 @@
+{
+  "base_url": "http://host.openshell.internal:8765",
+  "token_file": "/path/inside/the/sandbox/to/bench_token",
+  "timeout_s": 10,
+  "proxy": "env"
+}
