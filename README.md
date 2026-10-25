@@ -11,10 +11,18 @@ the Dell x NVIDIA AI hackathon on an NVIDIA GB10.
   inside a NemoClaw / OpenShell sandbox whose network policy allows only the bench's read-only API and
   the local model (github.com is refused by the policy). Every claim in an explanation cites a serial
   line, a register bit, a `file:line` or a diff line, and ends with one `DIAGNOSIS:` line.
-- **The only traffic that leaves the box** is the alert text to Telegram, relayed through a laptop.
+- **The only traffic that leaves the box** is the alert text and board photo to Telegram, relayed
+  through a laptop.
   AI coding tools were used to write code today; none takes part at runtime.
 - **One issue per problem** in a Forgejo tracker on the GB10, routed to Hardware team, Firmware team
-  or Triage.
+  or Triage; the same problem again adds a "happened again" comment.
+- **Telegram commands** (`bench/commands.py`): `/status`, `/test <name>`, `/rerun`, `/ask <n>` and
+  `/help`, read only from the team chat. Host code performs every action; the model only answers
+  `/ask`.
+- **A board photo** (`bench/snapshot.py`): a screenshot of the dashboard posted as a reply to each
+  incident's first alert.
+- **A dashboard** (`bench/dashboard.py`): a full-screen page on the GB10 monitor at
+  http://127.0.0.1:8770/, the board drawn green or red with a plain headline and a timeline.
 
 ## Device under test
 
@@ -41,6 +49,9 @@ Three jumper wires on CN8 stand in for devices: A0-A1 loopback, A2-A3 sensor, A4
     LW_HOST=172.18.0.1 python3 -m bench.endpoint             # the sandbox's read-only API
     python3 -m tracker.mirror
     python3 -m bench.status_view
+    python3 -m bench.dashboard                               # http://127.0.0.1:8770/
+    LW_TG_API=https://api.telegram.org:8443 python3 -m bench.commands
+    LW_TG_API=https://api.telegram.org:8443 python3 -m bench.snapshot
     python3 -m unittest discover -s tests -t .               # tests need no board or network
 
 Paths and settings are in `docs/01-day-contract.md`.

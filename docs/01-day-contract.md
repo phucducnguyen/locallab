@@ -63,23 +63,84 @@ Conventions in those tables:
 - `routing.route` is `Hardware team`, `Firmware team`, `Triage`, or NULL for NONE. A failed run
   that opens an incident has one routing row with both `incident_id` and `run_id`. Lane C writes
   its issue number into `routing.ticket` and `incidents.ticket`.
-- `alerts.transition` is `open`, `resolve`, `flap-<n>` (n = the flap count when sent) or `explain`.
-  Every non-open alert has `reply_to_alert_id` = the incident's `open` alert. `sent` stays NULL
+- `alerts.transition` is one of those listed under "Alerts" below. Every non-open alert has `reply_to_alert_id` = the incident's `open` alert. `sent` stays NULL
   until Telegram accepts it; the sender sends only rows with `sent IS NULL`.
 
-## Alerts (the bench's fixed wording)
+## Alerts (the bench's fixed wording, `bench/alerts.py`)
 
-    LOCAL LAB incident <id> OPEN            (or: RESOLVED after <n> s / FLAPPING (<n> flaps))
-    Board: <board>
-    Kind: <kind>
-    Triage: <triage>
-    Routed to: <route or none>
-    Reason: <reason>
-    Line: [<raw_ts>] <the quoted LW line>
-    File: <file:line>                       (only when there is one)
-    Incident: <id>
+Every Telegram message is two or three short lines in everyday English, written by fixed code
+with no model. The first line says what happened, with the board and the incident number; the
+second names the team and points to `/ask`. Technical words appear only after "Details:" and only
+when needed. The quoted board line, the sha and the timings stay in the DB, the dashboard and the
+issue. Messages go out as plain text (no parse mode), so board text can never format or link
+anything. Examples:
 
-The stub's `stub/db.py:alert_text` writes exactly this; lane A writes its own.
+    🔴 Board 1: the sensor wire came loose. (#5)
+    Team: hardware. Not a code problem. Ask: /ask 5
+
+    🔴 Board 1: the new code made it crash. (#6)
+    Team: firmware. Details: src/x.c:42. Ask: /ask 6
+
+    ⛔ Board 1: someone pressed the stop button. Not a fault. (#8)
+
+    ✅ Board 1: the sensor wire is back. Fixed after 26 seconds. (#5)
+
+A 🟡 first line ("Checking if it is the board or the code.") marks UNKNOWN triage; 🟠 marks a flap.
+
+### Transitions in use (`alerts.transition`)
+
+| Transition | Written by | What it says |
+| --- | --- | --- |
+| `open` | `bench.run` | the first alert above; every other row replies to it |
+| `resolve` | `bench.run` | ✅ the device is back, with the duration |
+| `flap-<n>` | `bench.run` | 🟠 keeps coming and going; n = the flap count when sent |
+| `diag` | `bench.run` | 🔧 the board's own self-check passed, failed or got no answer |
+| `decode` | `bench.run` | 🧩 where in the code the crash happened (`Details: file:line`) |
+| `confirmed` | `bench.confirm` | ✔ / ✖ the result of putting the last good code back |
+| `explain` | `bench.run` via `agent.explain` | 🧠 the model's answer, condensed to cause, next step and the DIAGNOSIS line |
+| `ticket` | `tracker.mirror` | `Ticket #<n>: <url>`, once per incident |
+| `fix` | `tracker.fix` | the proposed fix's pull-request link |
+
+### The board photo (`bench/snapshot.py`)
+
+A separate process polls the DB read-only for sent `open` alerts with no photo yet, waits 1.5 s so
+the dashboard shows the red state, screenshots the dashboard (http://127.0.0.1:8770/, headless
+Firefox by default) and posts it with `sendPhoto` as a reply to that alert, with a one-line plain
+caption. Photos sent or skipped are kept in `snapshots.db` in the state dir, so a restart never
+resends. LINK_DOWN gets no photo.
+
+### Telegram commands (`bench/commands.py`)
+
+    /status          device states, open incidents and the last run (bench DB, read-only)
+    /test <name>     POST /board/test (crc32 ringbuf systick cmd_dispatch loopback)
+    /rerun           POST /run with the bench's verified sha
+    /ask <n|text>    one sandbox-agent turn, 60 s, one at a time; "/ask 5" asks about incident 5
+    /help            the list
+
+Only messages from the team chat (`telegram_chat`, optionally narrowed by `LW_TG_USERS`) that start
+with `/` are read; everything else is ignored with a log line that never holds the text. Host code
+picks and performs every action; the model only answers `/ask`, and it never flashes, edits, calls
+git or talks to the board. At most one command per 3 s per user. The getUpdates offset is saved
+before each update is handled, so a restart never replays a command.
+
+### Incident kinds (`incidents.kind`)
+
+| Kind | Opens on |
+| --- | --- |
+| `HEALTH_FAIL` | a jumper device or the supply; `evidence.device` is `loopback`, `sensor`, `radio` or `power` |
+| `ESTOP` | the blue button held (an operator action, triage NONE, nobody to call) |
+| `HARDFAULT` | the board's crash line |
+| `RUN_FAIL` | a run of a new sha that does not pass |
+| `SILENT` | no LW lines for too long |
+| `LINK_DOWN` | the USB serial link dropped |
+| `REBOOT` | a boot nobody asked for |
+
+### Problem key (issue reuse)
+
+`tracker.mirror` writes the exact line `lw-key: board<board>/<device>/<state>` in each issue body
+(CODE incidents use `board<board>/CODE/<file:line>`). An incident whose key matches an open issue
+gets a "happened again" comment on it instead of a new issue; one closed under 60 min ago is
+reopened with that comment.
 
 ## Explanation contract
 
@@ -152,9 +213,7 @@ flaps 4), 3 HardFault of 2222222 (CODE, Firmware team). Runs: 1 pass of 1111111,
 
 ### Alert transitions
 
-`open`, `resolve`, `flap-<n>`, `explain` (model text, reply to open), `diag` (the board's
-`test loopback` reply), `confirmed` (triage after the confirming reflash), `fix` (agent.fix
-pull-request link). Every non-open row replies to the incident's open alert.
+Now listed in full under "Alerts" above. Every non-open row replies to the incident's open alert.
 
 ### On the GB10 today
 
