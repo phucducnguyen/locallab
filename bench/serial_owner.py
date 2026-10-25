@@ -9,6 +9,11 @@
 - When the port disappears it records LINK_DOWN, reopens in a loop and
   records LINK_UP.
 
+- request_probe() (after a GARBLED run): closes the port, listens for a
+  moment at each other standard rate, reports which rate (if any) gives
+  well-formed LW lines, and reopens at 115200. Probe bytes are only scored,
+  never delivered as board lines.
+
 Every line and link change becomes an Event, delivered to the on_event
 callback (if any) and put on the events queue.
 
@@ -29,6 +34,8 @@ DEFAULT_GLOB = "/dev/serial/by-id/*STM*"
 BAUD = 115200
 MAX_CMD = 32
 MAX_LINE = 4096
+PROBE_RATES = (9600, 19200, 38400, 57600, 230400, 460800, 921600)
+PROBE_DWELL_S = 1.5
 
 
 def wall_ts(t):
@@ -136,6 +143,7 @@ class SerialOwner:
         self._ser = None
         self._split = LineSplitter()
         self._last_rx = None
+        self._probes = queue.Queue()
 
     # ---- public ----
     def start(self):
@@ -156,6 +164,72 @@ class SerialOwner:
             return False
         self._cmds.put(cmd)
         return True
+
+    def request_probe(self, rates=PROBE_RATES, dwell=PROBE_DWELL_S, callback=None):
+        """Ask the reader thread to try other rates; callback(result) when done."""
+        self._probes.put((tuple(rates), dwell, callback))
+        return True
+
+    @staticmethod
+    def score(data):
+        """(well-formed LW records, unreadable bytes) in a probe's bytes."""
+        good = 0
+        for raw in data.split(b"\n"):
+            for r in parser.parse_line(raw.rstrip(b"\r"))["records"]:
+                if r["kind"] in parser.KINDS and not r.get("malformed"):
+                    good += 1
+        return good, parser.count_bad_bytes(data)
+
+    def probe_rates(self, path, rates, dwell):
+        """Listen at each rate on path; the result dict (port must be closed)."""
+        serial = self._serial()
+        tried = []
+        best = None
+        for rate in rates:
+            if self._stop.is_set():
+                break
+            data = b""
+            try:
+                ser = serial.Serial(port=path, baudrate=rate, bytesize=8, parity="N",
+                                    stopbits=1, timeout=0.05, exclusive=True)
+            except Exception as e:
+                tried.append({"rate": rate, "error": e.__class__.__name__})
+                continue
+            try:
+                end = time.monotonic() + dwell
+                while time.monotonic() < end and len(data) < 8192:
+                    data += ser.read(ser.in_waiting or 1)
+            except Exception as e:
+                tried.append({"rate": rate, "error": e.__class__.__name__})
+                continue
+            finally:
+                try:
+                    ser.close()
+                except Exception:
+                    pass
+            good, bad = self.score(data)
+            tried.append({"rate": rate, "bytes": len(data), "lw_records": good,
+                          "bad_bytes": bad})
+            if good and bad * 10 <= len(data) and (best is None or good > best[1]):
+                best = (rate, good)
+        return {"tried": tried, "decodes_at": best[0] if best else None,
+                "standard_rates": list(rates)}
+
+    def _run_probe(self):
+        rates, dwell, callback = self._probes.get_nowait()
+        path = self.current_port
+        self._emit_lines(self._split.flush(), time.time(), time.monotonic())
+        self._close()
+        try:
+            result = self.probe_rates(path, rates, dwell)
+        except Exception as e:
+            result = {"tried": [], "decodes_at": None, "error": e.__class__.__name__}
+        if callback:
+            try:
+                callback(result)
+            except Exception:
+                pass
+        # The port reopens at self.baud on the next pass of _run.
 
     # ---- internals ----
     def _serial(self):
@@ -227,6 +301,8 @@ class SerialOwner:
 
     def _run(self):
         while not self._stop.is_set():
+            if self._ser is not None and not self._probes.empty():
+                self._run_probe()
             if self._ser is None:
                 try:
                     self._open()

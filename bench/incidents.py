@@ -21,8 +21,23 @@ The timers are the interface's ("Incident states and timers"):
 - HARDFAULT: the first HARDFAULT line; the once-a-second repeats are the
   same incident. Resolves on the next BOOT line.
 - RUN_FAIL: a bench run (after the bench's own flash, verified by
-  "LW BOOT fw=<sha>") that ends in RESULT FAIL or a reset loop. Resolves on
-  the next verified boot.
+  "LW BOOT fw=<sha>") that ends in RESULT FAIL, a reset loop (a further
+  BOOT with IWDG in reset=), or no RESULT within the capture window
+  (NO_OUTPUT); or a flash after which the board printed nothing
+  (NO_OUTPUT) or only unreadable bytes (GARBLED). Resolves on the next
+  verified boot.
+
+The bench's flash (interface "Verified firmware"): expect_flash pauses the
+board and discards every record until "LW BOOT fw=<sha>"; flash_copied arms
+the 15 s window from the end of the copy. No matching BOOT in the window:
+nothing at all after the copy is NO_OUTPUT, unreadable bytes and no LW line
+is GARBLED, anything else (LW lines of another build, a BOOT of another sha)
+is FLASH_ERROR; all three unverified, never a pass. A flash by hand
+(copied=True at once) cannot know when its copy ended, so silence there
+stays FLASH_ERROR. LINK_DOWN opens no
+incident while the bench is flashing (the board re-enumerates). After a
+verified BOOT the run is captured until RESULT, the first HARDFAULT (the
+bench keeps 3 s more of lines) or 15 s.
 
 Resolve alerts are held for the flap window (60 s) after the close, so a
 flapping incident gets one resolve alert at its real end (the record itself
@@ -53,7 +68,11 @@ FLAP_S = 60.0
 SILENT_S = 3.0
 LINK_ALERT_S = 10.0
 REPLUG_S = 10.0
-FLASH_WINDOW_S = 15.0
+FLASH_WINDOW_S = 15.0    # copy end -> LW BOOT fw=<sha>
+CAPTURE_S = 15.0         # verified BOOT -> RESULT / HARDFAULT
+COPY_WINDOW_S = 120.0    # pause start -> copy end
+STALE_GRACE_S = 2.0      # LW lines this soon after the copy may be the old build's
+GARBLED_MIN_BYTES = 8
 MAX_CITES = 12
 
 
@@ -98,13 +117,14 @@ class Incident:
 
 class Machine:
     def __init__(self, board, silent_s=SILENT_S, flap_s=FLAP_S, link_alert_s=LINK_ALERT_S,
-                 replug_s=REPLUG_S, resolve_hold_s=None):
+                 replug_s=REPLUG_S, resolve_hold_s=None, capture_s=CAPTURE_S):
         self.board = board
         self.silent_s = silent_s
         self.flap_s = flap_s
         self.link_alert_s = link_alert_s
         self.replug_s = replug_s
         self.resolve_hold_s = flap_s if resolve_hold_s is None else resolve_hold_s
+        self.capture_s = capture_s
         self._next_key = 1
         self.active = {}        # kind -> Incident not RESOLVED
         self.recent = {}        # kind -> the last Incident of that kind
@@ -188,12 +208,78 @@ class Machine:
         if inc.state != "RESOLVED":
             self.active[inc.kind] = inc
 
-    def expect_flash(self, t, sha, window=FLASH_WINDOW_S):
-        """The bench flashed sha (by hand until stage A3). Pause and discard until its BOOT."""
-        self.expect = {"sha": sha, "t": t, "deadline": t + window, "discarded": 0}
-        self.run = None
+    def expect_flash(self, t, sha, window=FLASH_WINDOW_S, copied=True):
+        """The bench flashes sha: pause and discard until its BOOT.
+
+        copied=True (a flash by hand) starts the BOOT window now; the bench's
+        own flash passes copied=False and calls flash_copied when the copy ends.
+        """
+        out = []
+        if self.run is not None:
+            run = self._end_run(t, "ABORTED")
+            out.append({"type": "log", "what": "RUN_ABORTED", "t": t, "sha": run["sha"]})
+        self.expect = {"sha": sha, "t": t, "deadline": t + window, "discarded": 0,
+                       "copied": copied, "hand": copied, "t_copied": t if copied else None,
+                       "late": 0,
+                       "bytes": 0, "bad_bytes": 0, "nonlw": 0, "other_boot": None}
         self.verified_sha = None
-        return [{"type": "log", "what": "FLASH_EXPECT", "t": t, "sha": sha}]
+        out.append({"type": "log", "what": "FLASH_EXPECT", "t": t, "sha": sha})
+        return out
+
+    def flash_copied(self, t, window=FLASH_WINDOW_S):
+        """The copy finished: the BOOT window starts now; earlier bytes are stale."""
+        if self.expect is None:
+            return []
+        e = self.expect
+        e.update(copied=True, t_copied=t, deadline=t + window, late=0, bytes=0, bad_bytes=0,
+                 nonlw=0, other_boot=None)
+        return [{"type": "log", "what": "FLASH_COPIED", "t": t, "sha": e["sha"]}]
+
+    def _unverified_run(self, t, sha, verdict, t_start, **extra):
+        run = {"sha": sha, "verified": False, "t_start": t_start, "t_end": t, "tests": {},
+               "cites": [], "verdict": verdict, "discarded": 0}
+        run.update(extra)
+        return run
+
+    def flash_failed(self, t, why, verdict="FLASH_ERROR", sha=None):
+        """The flash (or the build) failed: a run that never ran, never a pass."""
+        e, self.expect = self.expect, None
+        self.last_lw_t = t
+        sha = sha or (e["sha"] if e else None)
+        run = self._unverified_run(t, sha, verdict, e["t"] if e else t,
+                                   discarded=e["discarded"] if e else 0, why=why)
+        return [{"type": "run_end", "run": run, "t": t}]
+
+    def noise(self, t, nbytes, bad):
+        """A non-LW line (nbytes long, bad unreadable bytes) while flashing."""
+        e = self.expect
+        if e is not None and e["copied"]:
+            e["bytes"] += nbytes
+            e["bad_bytes"] += bad
+            e["nonlw"] += 1
+
+    def _expect_timeout(self, t):
+        e, self.expect = self.expect, None
+        self.last_lw_t = t
+        facts = {"bytes": e["bytes"], "bad_bytes": e["bad_bytes"], "nonlw_lines": e["nonlw"],
+                 "lw_after_copy": e["late"], "other_boot": e["other_boot"],
+                 "window_s": round(t - (e["t_copied"] or e["t"]), 3)}
+        if not e["copied"]:
+            verdict, why = "FLASH_ERROR", "the copy did not finish in time"
+        elif e["other_boot"]:
+            verdict, why = "FLASH_ERROR", "the board booted fw=%s instead" % e["other_boot"]
+        elif e["late"] == 0 and e["bad_bytes"] >= GARBLED_MIN_BYTES:
+            verdict, why = "GARBLED", "only unreadable bytes after the copy"
+        elif e["late"] == 0 and e["bytes"] == 0 and not e["hand"]:
+            verdict, why = "NO_OUTPUT", "nothing at all after the copy"
+        else:
+            verdict, why = "FLASH_ERROR", "LW lines arrived but no LW BOOT fw=%s" % e["sha"]
+        run = self._unverified_run(t, e["sha"], verdict, e["t"], discarded=e["discarded"],
+                                   why=why, capture=facts)
+        out = [{"type": "run_end", "run": run, "t": t}]
+        if verdict in ("NO_OUTPUT", "GARBLED"):
+            out += self._open(t, RUN_FAIL, None, facts={"verdict": verdict}, run=run)
+        return out
 
     def link_up(self, t):
         out = []
@@ -224,14 +310,22 @@ class Machine:
     def record(self, t, rec, cite=None):
         """One parsed LW record (bench.parser.parse_record) with its citation."""
         kind = rec.get("kind")
-        if self.expect is not None:
-            if kind == "BOOT" and sha_match(rec.get("fw"), self.expect["sha"]):
+        e = self.expect
+        if e is not None:
+            if kind == "BOOT" and sha_match(rec.get("fw"), e["sha"]):
                 return self._verified_boot(t, rec, cite)
-            self.expect["discarded"] += 1
+            e["discarded"] += 1
+            if e["copied"]:
+                if kind == "BOOT" and rec.get("fw"):
+                    e["other_boot"] = rec["fw"][:40]
+                if t - e["t_copied"] > STALE_GRACE_S or kind == "BOOT":
+                    e["late"] += 1
             return []
         out = []
         self.last_lw_t = t
         self.last_cite = cite
+        if self.run is not None:
+            self.run["records"] += 1
         out += self._resolve(t, SILENT, cite)
         if kind == "BOOT":
             out += self._boot(t, rec, cite)
@@ -261,12 +355,14 @@ class Machine:
     def tick(self, t):
         out = []
         if self.expect is not None and t >= self.expect["deadline"]:
-            exp, self.expect = self.expect, None
-            self.last_lw_t = t
-            run = {"sha": exp["sha"], "t_start": exp["t"], "t_end": t, "tests": {},
-                   "cites": [], "verdict": "FLASH_ERROR", "discarded": exp["discarded"]}
+            out += self._expect_timeout(t)
+        if self.run is not None and t >= self.run["deadline"]:
+            run = self._end_run(t, "NO_OUTPUT")
+            run["why"] = "no LW RESULT or HARDFAULT within %.0f s of the BOOT line" % (
+                self.capture_s)
             out.append({"type": "run_end", "run": run, "t": t})
-        if (self.link is False and self.down_since is not None
+            out += self._open(t, RUN_FAIL, None, facts={"verdict": "NO_OUTPUT"}, run=run)
+        if (self.link is False and self.down_since is not None and self.expect is None
                 and t - self.down_since >= self.link_alert_s and LINK_DOWN not in self.active):
             prev = self.recent.get(LINK_DOWN)
             if prev is None or prev.opened < self.down_since:
@@ -299,9 +395,10 @@ class Machine:
         self.last_lw_t = t
         self.last_cite = cite
         self._reset_boot_state()
-        self.run = {"sha": exp["sha"], "t_start": exp["t"], "t_boot": t, "tests": {},
-                    "cites": [cite] if cite else [], "verdict": None,
-                    "discarded": exp["discarded"], "reset": rec.get("reset", [])}
+        self.run = {"sha": exp["sha"], "verified": True, "t_start": exp["t"], "t_boot": t,
+                    "tests": {}, "cites": [cite] if cite else [], "verdict": None,
+                    "discarded": exp["discarded"], "reset": rec.get("reset", []),
+                    "deadline": t + self.capture_s, "records": 0}
         out = [{"type": "run_start", "sha": exp["sha"], "t": t, "discarded": exp["discarded"]}]
         out += self._resolve(t, HARDFAULT, cite)
         out += self._resolve(t, RUN_FAIL, cite)
@@ -324,12 +421,18 @@ class Machine:
                         "fw": fw})
             self.verified_sha = None
         if self.run is not None:
-            # A second boot inside the bench's run: the run never finished.
-            run = self._end_run(t, "RESET_LOOP", cite)
-            out.append({"type": "run_end", "run": run, "t": t})
-            out += self._open(t, RUN_FAIL, cite, facts={"verdict": "RESET_LOOP",
-                                                         "reset": rec.get("reset", [])}, run=run)
-            return out
+            if "IWDG" in (rec.get("reset") or []):
+                # A watchdog boot inside the bench's run: the run never finished.
+                run = self._end_run(t, "RESET_LOOP", cite)
+                out.append({"type": "run_end", "run": run, "t": t})
+                out += self._open(t, RUN_FAIL, cite, facts={"verdict": "RESET_LOOP",
+                                                             "reset": rec.get("reset", [])},
+                                  run=run)
+                return out
+            # Another boot (the RESET button, say): the run is abandoned, the
+            # boot is judged like any other.
+            run = self._end_run(t, "ABORTED", cite)
+            out.append({"type": "log", "what": "RUN_ABORTED", "t": t, "sha": run["sha"]})
         if self._in_replug(t):
             out.append({"type": "log", "what": "REPLUG", "t": t, "how": "boot", "cite": cite})
             return out
