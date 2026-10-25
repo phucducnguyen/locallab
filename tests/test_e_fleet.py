@@ -180,7 +180,7 @@ class FleetTest(unittest.TestCase):
             return b if b and b["restarts"] == 1 and b["pid"] and b["pid"] != old["pid"] else None
         b = wait_until(restarted)
         self.assertEqual(os.readlink(b["link"]), b["pty"])
-        p.send_signal(signal.SIGTERM)
+        p.send_signal(signal.SIGHUP)  # what tmux kill-session sends
         self.assertEqual(p.wait(10), 0)
         data = self.read()
         self.assertEqual(data["fleet"]["state"], "stopped")

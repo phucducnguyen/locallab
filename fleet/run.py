@@ -11,7 +11,7 @@ Each board is one qemu-system-arm with USART2 (the second serial) on a pty:
 The boards are emu-1..emu-N. <state-dir>/boards.json lists every board (name,
 pty, a stable symlink <state-dir>/<name>.tty to that pty, pid, elf,
 "emulated": true). A board that dies is started again (its pty path changes;
-the symlink follows, like a replug). SIGTERM or SIGINT stops every board.
+the symlink follows, like a replug). SIGTERM, SIGINT or SIGHUP (tmux kill-session) stops every board.
 
 --monitor gives each board a QEMU monitor on <state-dir>/<name>.mon (a unix
 socket) instead of none, so that reset_board() can press its RESET button.
@@ -255,6 +255,7 @@ class Fleet:
             self.stopping = True
         signal.signal(signal.SIGTERM, on_sig)
         signal.signal(signal.SIGINT, on_sig)
+        signal.signal(signal.SIGHUP, on_sig)  # tmux kill-session sends HUP
         self.start()
         try:
             while not self.stopping:
