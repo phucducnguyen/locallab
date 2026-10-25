@@ -11,10 +11,10 @@ change in its stage report; main edits this file.
 | `bench/` | lane A (serial, incidents, triage, flash, alerts, endpoint) |
 | `agent/` | lane B; the OpenClaw skill folder is `agent/skill/labwatch/` |
 | `tracker/` | lane C |
-| `score/` | lane D |
+| `fleet/` | lane E (QEMU emulated boards) |
 | `stub/` | main (the stand-in endpoint for B, C and D) |
 | `tests/test_<lane>_*.py` | each lane its own (`a`, `b`, `c`, `d`, `stub`) |
-| `docs/` | main: this file and `schema.sql` only |
+| `docs/` | main: this file, `schema.sql`, the write-up and the demo script |
 
 Tests: `python3 -m unittest discover -s tests -t .` from the repo root. Python 3.12, standard
 library plus pyserial.
@@ -99,7 +99,7 @@ A 🟡 first line ("Checking if it is the board or the code.") marks UNKNOWN tri
 | `confirmed` | `bench.confirm` | ✔ / ✖ the result of putting the last good code back |
 | `explain` | `bench.run` via `agent.explain` | 🧠 the model's answer, condensed to cause, next step and the DIAGNOSIS line |
 | `ticket` | `tracker.mirror` | `Ticket #<n>: <url>`, once per incident |
-| `fix` | `tracker.fix` | the proposed fix's pull-request link |
+| `fix` | `tracker.fix` (`python3 -m agent.fix`) | the proposed fix's pull-request link (optional; not run live today) |
 
 ### The board photo (`bench/snapshot.py`)
 
@@ -223,8 +223,8 @@ Now listed in full under "Alerts" above. Every non-open row replies to the incid
 | Bench DB | `~/.local/state/labwatch/bench.db` |
 | Hold file | `~/.local/state/labwatch/hold` |
 | bench token | `~/.config/labwatch/bench_token` (copied into the sandbox as `/sandbox/.config/labwatch/bench_token`) |
-| Explain | `LW_AGENT_CONFIG=~/lw/agent/agent.gb10.json python3 -m agent.explain --incident <id>` (about 45 s on an idle model; timeout 55 s) |
+| Explain | `LW_AGENT_CONFIG=~/lw/agent/agent.gb10.json python3 -m agent.explain --incident <id>` (18-46 s measured today; timeout 55 s) |
 | NemoClaw | every `nemoclaw`/`openshell` call needs `NEMOCLAW_GATEWAY_PORT=8090` and `PATH=$HOME/.local/bin:$PATH` |
 | Model path | vLLM on 127.0.0.1:8000; user-level forwarders on 172.17.0.1:8000 and 172.18.0.1:8000 (tmux lw-fwd8000, lw-fwd8000b) |
-| Bench firmware | `~/bench-fw` main; baseline for the scored run: set after the board passes (7e056f5 now, a0f0c9f next) |
+| Bench firmware | `~/bench-fw` main; baseline for the scored run: a0f0c9f |
 | Telegram | sender with `LW_TG_API=https://api.telegram.org:8443` through the laptop relay; chat = the team group |
