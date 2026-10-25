@@ -162,8 +162,8 @@ def hardfault(w, clock, sha=SHA_NEW, subject="demo: add the example handler"):
         clock.wait(0.05)
         lines.append(w.serial(clock.now(), "LW TEST %s PASS" % name, "TEST",
                               name=name, result="PASS"))
-    regs = {"pc": "0x08001234", "lr": "0x080011f5", "psr": "0x01000000", "cfsr": "0x00008200",
-            "hfsr": "0x40000000", "bfar": "0x20020000", "mmfar": "0xe000ed34",
+    regs = {"pc": "0x08001234", "lr": "0x08001201", "psr": "0x01000000", "cfsr": "0x00000082",
+            "hfsr": "0x40000000", "bfar": "0x60000010", "mmfar": "0x60000010",
             "sp": "0x2001ffa0"}
     hf_line = "LW HARDFAULT " + " ".join("%s=%s" % kv for kv in regs.items())
     clock.wait(0.05)
@@ -171,11 +171,11 @@ def hardfault(w, clock, sha=SHA_NEW, subject="demo: add the example handler"):
     t_first = clock.now()
     clock.wait(1.0)
     lines += [first, w.serial(clock.now(), hf_line, "HARDFAULT", **regs)]
-    evidence = {"lines": lines, "registers": regs, "cfsr_bits": ["PRECISERR", "BFARVALID"],
+    evidence = {"lines": lines, "registers": regs, "cfsr_bits": ["DACCVIOL", "MMARVALID"],
                 "hfsr_bits": ["FORCED"], "file_line": FILE_LINE}
     rid = w.run(t0, sha, subject, "HARDFAULT", "CODE", evidence, clock.now())
     w.event(clock.now(), "RUN_END", run_id=rid, verdict="HARDFAULT", triage="CODE")
-    reason = ("This sha's own run faulted: cfsr=0x00008200 (PRECISERR) bfar=0x20020000, "
+    reason = ("This sha's own run faulted: cfsr=0x00000082 (DACCVIOL) mmfar=0x60000010, "
               "%s; last pass %s." % (FILE_LINE, last_pass[0]))
     iid = w.open_incident(clock.now(), "HARDFAULT", "CODE", reason, evidence, firmware=sha,
                           last_pass=last_pass, t_first_bad=t_first)
