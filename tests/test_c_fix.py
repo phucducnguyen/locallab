@@ -421,8 +421,14 @@ class FailedFixTest(Base):
 
     def test_lane_a_flash_missing_is_failed_verification(self):
         self.w.set_reply(reply(GOOD_DIFF))
-        with mock.patch.dict(sys.modules, {"bench.flash": None}):
-            rc = self.run_fix(verifier=fix.lane_a_verifier(5.0))
+        import bench
+        saved = bench.__dict__.pop("flash", None)  # an earlier test may have imported it
+        try:
+            with mock.patch.dict(sys.modules, {"bench.flash": None}):
+                rc = self.run_fix(verifier=fix.lane_a_verifier(5.0))
+        finally:
+            if saved is not None:
+                bench.flash = saved
         self.assertEqual(rc, fix.EXIT_FAILED)
         self.assertIn("no flash step", self.alerts()["fix-failed"]["text"])
 
