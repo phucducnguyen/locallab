@@ -1,4 +1,4 @@
-"""Mirror the bench's routing rows into Forgejo: one issue per incident.
+"""Mirror the bench's routing rows into Forgejo: one issue per problem.
 
     python3 -m tracker.mirror [--db PATH] [--state PATH] [--once] [--interval 2]
 
@@ -7,22 +7,34 @@ operations in an outbox table in this lane's own state DB (default
 tracker_state.db next to the bench DB); replay sends them in order and stops
 while the tracker is down, so no create, comment or close is ever dropped.
 
-- Create: for each routing row without a ticket (and with a route), one issue
-  titled "[lw-<incident id>] <board> <kind>: <triage>", labelled by route, body
-  with the route, the reason, the verified sha and file:line, never source or
-  diff text. The number goes into routing.ticket and incidents.ticket at once.
-- Dedupe: the stored number is the key. Only a create that was sent but whose
-  number was never stored (a crash, a lost reply) is searched for by q=lw-<id>,
-  retried for up to 10 s for the indexer lag; only an exact title match counts.
+- Problem key: board<board>/<device>/<state> (hardware and other triage) or
+  board<board>/CODE/<file:line> (CODE; the kind when no file:line), written
+  in the issue body as the exact line "lw-key: <key>". The state DB's
+  problems table (key -> issue) is the index.
+- Create: a routing row whose problem has no usable issue gets one issue
+  titled "[lw-<incident id>] <board> <kind>: <triage>", labelled by route,
+  body with the route, the reason, the verified sha and file:line, never
+  source or diff text, and the lw-key line.
+- Reuse: an open issue of the same problem gets "happened again at <UTC>,
+  incident <id>, duration <s> s|still open"; one closed under 60 min ago is
+  reopened with that comment. The number goes into routing.ticket and
+  incidents.ticket, and one "ticket" alert row ("Ticket #<n>: <url>",
+  replying to the open alert) is queued per incident; the URL base is
+  LW_TRACKER_PUBLIC.
+- Dedupe after a crash: only a create that was sent but whose number was
+  never stored is searched for by q=lw-<id>, retried for up to 10 s for the
+  indexer lag; only an exact title plus the exact lw-key line counts.
 - Flaps: one comment with the flap count, at most once per 60 s per incident.
-- Resolve: a comment with the duration, then close. An incident that has
-  flapped is closed once it has stayed resolved for the 60 s flap window; a
-  closed issue whose incident reopens is reopened.
+- Resolve: a comment with the duration, then close, but a shared issue closes
+  only when its last open incident resolves. An incident that has flapped is
+  closed once it has stayed resolved for the 60 s flap window; a closed issue
+  whose incident reopens is reopened.
 - Comments carry "(lab watch update <op id>)" so an ambiguous retry is checked
   against the issue's comments instead of posted twice.
 
 Env: LW_DB (bench DB), LW_SECRETS_DIR (tracker_token, tracker_labels.json),
-LW_TRACKER (base URL), LW_TRACKER_STATE (state DB path).
+LW_TRACKER (base URL), LW_TRACKER_PUBLIC (link base in the ticket alert,
+default http://127.0.0.1:3000), LW_TRACKER_STATE (state DB path).
 """
 
 import argparse
