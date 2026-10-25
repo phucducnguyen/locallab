@@ -409,6 +409,9 @@ class Bench:
         ev["lines"] = inc.cites
         ev["facts"] = inc.facts
         ev["repeats"] = inc.repeats
+        extras = getattr(self.m, "extras", None)
+        if extras:  # device, pins, pin_in, power, dump at the top level (I2)
+            ev.update(extras(inc))
         ev.setdefault("file_line", None)
         inc.evidence = ev
         return store.dumps(ev)

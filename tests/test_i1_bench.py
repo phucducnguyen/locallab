@@ -97,8 +97,7 @@ class TestDecodeAndDump(unittest.TestCase):
         self.assertTrue(hf[0]["dump"]["complete"])
         self.assertEqual(hf[0]["dump"]["cause_names"], ["FORCED", "UNDEFINSTR"])
         self.assertTrue(rev["dump"]["complete"])
-        stored = ev.get("dump") or (ev.get("facts") or {}).get("dump")
-        self.assertTrue(stored and stored["complete"])
+        self.assertTrue(ev["dump"]["complete"])   # top level of evidence
 
     def test_dump_lines_discarded_while_flashing_are_not_paired(self):
         r = self.rig(0.0)
@@ -128,6 +127,34 @@ class TestDecodeAndDump(unittest.TestCase):
         self.assertIn("File: /src/app/main.c:42", dec[0]["text"])
         ev = json.loads(r.rows("SELECT evidence FROM incidents")[0]["evidence"])
         self.assertEqual(ev["file_line"], "/src/app/main.c:42")
+
+
+class TestDeviceEvidence(unittest.TestCase):
+    """I2's per-device incidents opened through bench.run keep evidence.device at the top."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.r = Rig(self.tmp.name)
+        self.addCleanup(self.r.conn.close)
+
+    def health(self, t, n, **dev):
+        fields = {"sensor": "OK", "radio": "OK", "estop": "OFF"}
+        fields.update(dev)
+        self.r.line(t, "LW ALIVE %d" % n)
+        self.r.line(t + 0.01, "LW HEALTH %d loopback=OK%s" % (
+            n, "".join(" %s=%s" % kv for kv in fields.items())))
+
+    def test_estop_and_sensor_open_have_device(self):
+        self.health(1, 1)
+        self.health(2, 2, estop="ON")
+        self.health(3, 3, sensor="OPEN")
+        self.health(4, 4, sensor="OPEN")
+        inc = {i["kind"]: json.loads(i["evidence"])
+               for i in self.r.rows("SELECT * FROM incidents")}
+        self.assertEqual(inc["ESTOP"]["device"], "estop")
+        sensor = [ev for k, ev in inc.items() if k != "ESTOP"]
+        self.assertEqual([ev["device"] for ev in sensor], ["sensor"])
 
 
 class TestTestRequest(unittest.TestCase):
