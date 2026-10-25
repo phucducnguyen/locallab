@@ -73,6 +73,9 @@ On {{N_TRIALS}} trials today, the rule was right on {{RULE_RIGHT}} and the agent
 - The Telegram bot is a throwaway demo bot; its token lives only in a file on the GB10.
 - The GB10 reaches Telegram only through the laptop's SSH relay.
 
+The device under test runs our open-source fault-demo firmware with today's additions on its
+branch `day/health-dump` (github.com/phucducnguyen/nucleo-f446re-fault-demo).
+
 ## Disclosure
 
 The test firmware is our own open-source repo, published before today. We prototyped the idea last week; none of that code is here. This repo started empty this morning, and every line in it was written today.
