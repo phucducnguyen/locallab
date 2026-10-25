@@ -629,6 +629,17 @@ def chat(base_url, payload, timeout):
     return body, time.monotonic() - t
 
 
+def wait_while_paused(path, poll=5.0):
+    """Hold new requests while the pause file exists (live board tests use the model)."""
+    if not path:
+        return
+    path = os.path.expanduser(path)
+    if os.path.exists(path):
+        print("sim_eval: paused while %s exists" % path, file=sys.stderr, flush=True)
+    while os.path.exists(path):
+        time.sleep(poll)
+
+
 def run_trial(case, args, skill_text):
     payload = {"model": args.model, "messages": build_messages(case, skill_text),
                "max_tokens": args.max_tokens, "temperature": args.temperature}
@@ -636,6 +647,7 @@ def run_trial(case, args, skill_text):
         payload["chat_template_kwargs"] = {"enable_thinking": False}
     out = {"i": case["i"], "variant": case["variant"], "target": case["target"],
            "id": case["id"], "expect": case["expect"]}
+    wait_while_paused(args.pause_file)
     t = time.monotonic()
     try:
         if args.dry_run:
@@ -770,6 +782,8 @@ def main(argv=None, out=None):
     ap.add_argument("--think", choices=("on", "off"), default="off",
                     help="off sends chat_template_kwargs enable_thinking=false")
     ap.add_argument("--timeout", type=float, default=300.0, help="seconds per request")
+    ap.add_argument("--pause-file", default="~/lw-sim/PAUSE",
+                    help="no new request is sent while this file exists ('' to ignore)")
     ap.add_argument("--no-gpu", action="store_true", help="do not sample nvidia-smi")
     ap.add_argument("--dry-run", action="store_true",
                     help="score the built-in rule-following reply; no model is called")
