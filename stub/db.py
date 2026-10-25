@@ -45,11 +45,11 @@ def raw_ts(t):
 def alert_text(transition, inc, line=None, line_ts=None):
     """The fixed alert wording (docs/01-day-contract.md, "Alerts")."""
     if transition == "open":
-        head = "LAB WATCH incident %d OPEN" % inc["id"]
+        head = "LOCAL LAB incident %d OPEN" % inc["id"]
     elif transition == "resolve":
-        head = "LAB WATCH incident %d RESOLVED after %.0f s" % (inc["id"], inc["duration_s"] or 0)
+        head = "LOCAL LAB incident %d RESOLVED after %.0f s" % (inc["id"], inc["duration_s"] or 0)
     elif transition.startswith("flap-"):
-        head = "LAB WATCH incident %d FLAPPING (%d flaps)" % (inc["id"], inc["flaps"])
+        head = "LOCAL LAB incident %d FLAPPING (%d flaps)" % (inc["id"], inc["flaps"])
     else:
         raise ValueError(transition)
     out = [head,

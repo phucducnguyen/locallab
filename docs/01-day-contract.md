@@ -69,7 +69,7 @@ Conventions in those tables:
 
 ## Alerts (the bench's fixed wording)
 
-    LAB WATCH incident <id> OPEN            (or: RESOLVED after <n> s / FLAPPING (<n> flaps))
+    LOCAL LAB incident <id> OPEN            (or: RESOLVED after <n> s / FLAPPING (<n> flaps))
     Board: <board>
     Kind: <kind>
     Triage: <triage>
@@ -126,3 +126,46 @@ All stub values are invented: shas 1111111 (last pass) and 2222222 (the new comm
 made-up registers. Canned incidents: 1 pulled jumper (HARDWARE, resolved), 2 flap (FLAPPING,
 flaps 4), 3 HardFault of 2222222 (CODE, Firmware team). Runs: 1 pass of 1111111, 2 HardFault of
 2222222. `/show` answers only for 2222222.
+
+## Updates, 12:45
+
+### Board protocol additions (firmware 7e056f5 and a0f0c9f; additions only)
+
+    LW HEALTH <n> loopback=OK|OPEN|STUCK sensor=OK|OPEN|STUCK radio=OK|OPEN|STUCK estop=ON|OFF[ vdd=<mV>][ temp=<C>]
+
+- Parse every field by key, never by position. sensor, radio and estop come with a0f0c9f
+  (SIM builds read OK, OK, OFF); older firmware and the recordings lack them: absent = unknown.
+- vdd: millivolts from VREFINT (about 3300 on USB). temp: signed degrees C, die sensor (+-5 C).
+  Both optional; absent = unknown, never 0.
+- Pins (CN8): loopback A0 (PA0 out) to A1 (PA1 in); sensor A2 (PA4 out) to A3 (PB0 in); radio A4
+  (PC1 out) to A5 (PC0 in); estop = blue user button B1 (PC13), held = ON. OPEN = wire pulled,
+  STUCK = input grounded. Never ground A0, A2 or A4; ground A1, A3 or A5 only with that pair pulled.
+- On a fault, once, before the first LW HARDFAULT (which still repeats every second):
+
+      LW DUMP reg r0=0x%08x r1=... r2=... r3=... r12=... lr=... pc=... psr=...
+      LW DUMP stack 0x<addr> 0x<w0> 0x<w1> 0x<w2> 0x<w3>     (up to 8; or: LW DUMP stack bad sp=0x...)
+      LW DUMP cause <NAME>[ <NAME>...]                        (HFSR/CFSR bit names, or NONE)
+      LW DUMP end
+
+  A burst belongs to the next HARDFAULT line; it may be missed after a reconnect, and the
+  HARDFAULT line stays the authority.
+
+### Alert transitions
+
+`open`, `resolve`, `flap-<n>`, `explain` (model text, reply to open), `diag` (the board's
+`test loopback` reply), `confirmed` (triage after the confirming reflash), `fix` (agent.fix
+pull-request link). Every non-open row replies to the incident's open alert.
+
+### On the GB10 today
+
+| What | Value |
+| --- | --- |
+| Endpoint | `LW_HOST=172.18.0.1` (the openshell-docker bridge the sandbox reaches as host.openshell.internal), port 8765 |
+| Bench DB | `~/.local/state/labwatch/bench.db` |
+| Hold file | `~/.local/state/labwatch/hold` |
+| bench token | `~/.config/labwatch/bench_token` (copied into the sandbox as `/sandbox/.config/labwatch/bench_token`) |
+| Explain | `LW_AGENT_CONFIG=~/lw/agent/agent.gb10.json python3 -m agent.explain --incident <id>` (about 45 s on an idle model; timeout 55 s) |
+| NemoClaw | every `nemoclaw`/`openshell` call needs `NEMOCLAW_GATEWAY_PORT=8090` and `PATH=$HOME/.local/bin:$PATH` |
+| Model path | vLLM on 127.0.0.1:8000; user-level forwarders on 172.17.0.1:8000 and 172.18.0.1:8000 (tmux lw-fwd8000, lw-fwd8000b) |
+| Bench firmware | `~/bench-fw` main; baseline for the scored run: set after the board passes (7e056f5 now, a0f0c9f next) |
+| Telegram | sender with `LW_TG_API=https://api.telegram.org:8443` through the laptop relay; chat = the team group |

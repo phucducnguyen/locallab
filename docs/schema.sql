@@ -8,7 +8,7 @@ CREATE TABLE IF NOT EXISTS incidents (
     id               INTEGER PRIMARY KEY,
     board            TEXT NOT NULL,
     kind             TEXT NOT NULL CHECK (kind IN
-                       ('HEALTH_FAIL','SILENT','LINK_DOWN','REBOOT','HARDFAULT','RUN_FAIL')),
+                       ('HEALTH_FAIL','SILENT','LINK_DOWN','REBOOT','HARDFAULT','RUN_FAIL','ESTOP')),
     state            TEXT NOT NULL CHECK (state IN ('OPEN','FLAPPING','RESOLVED')),
     opened           REAL NOT NULL,
     closed           REAL,

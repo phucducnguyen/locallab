@@ -124,7 +124,7 @@ class SetupApiTest(Base):
         out, err = io.StringIO(), io.StringIO()
         with mock.patch.dict(os.environ, {"LW_TRACKER": self.fake.base}), \
                 contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
-            rc = setup_api.main(["--secrets-dir", self.secrets])
+            rc = setup_api.main(["--secrets-dir", self.secrets, "--no-code-repo"])
         self.assertEqual(rc, 0)
         self.assertNotIn(SETUP_TOKEN, out.getvalue() + err.getvalue())
         self.assertNotIn(BENCH_TOKEN, out.getvalue() + err.getvalue())
