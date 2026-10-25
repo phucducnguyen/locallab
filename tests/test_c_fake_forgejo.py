@@ -3,10 +3,21 @@
 Implements only what tracker/ uses, with the behaviour the spec found on the
 real 16.0.6: search lags behind a create and matches loosely (title or body),
 and the write:issue bench token is refused repo creation.
+
+Code repos (stage C3): each created repo is also a bare git repo served over
+smart HTTP by the real `git http-backend`, with Basic auth (user:token) as
+Forgejo takes tokens on its git side. Push and pull requests need the
+write:repository scope, as on Forgejo (pulls are in the repository scope
+category, not issue), so the bench token is refused both.
 """
 
+import base64
 import json
+import os
 import re
+import shutil
+import subprocess
+import tempfile
 import threading
 import time
 import unittest
@@ -25,6 +36,8 @@ OWNER = "labwatch"
 class FakeForgejo:
     def __init__(self, search_lag=1.0, with_repo=False):
         self.search_lag = search_lag
+        self.git_root = tempfile.mkdtemp(prefix="lw-fake-forgejo-")
+        self.auth_seen = []    # Authorization header values seen on git routes
         self.lock = threading.Lock()
         self.repos = {}        # name -> {"labels": [...], "issues": [...]}
         self.calls = []        # (method, path, auth scheme ok)
@@ -33,7 +46,7 @@ class FakeForgejo:
         self.drop_comment_reply_once = False  # post the comment, then close without a reply
         self.on_create = None  # called after an issue is stored, before the reply
         if with_repo:
-            self.repos["bench-1"] = {"labels": [], "issues": []}
+            self._new_repo("bench-1")
         self.srv = ThreadingHTTPServer(("127.0.0.1", 0), self._handler())
         self.srv.daemon_threads = True
         self.base = "http://127.0.0.1:%d" % self.srv.server_address[1]
@@ -46,6 +59,20 @@ class FakeForgejo:
     def stop(self):
         self.srv.shutdown()
         self.srv.server_close()
+        shutil.rmtree(self.git_root, ignore_errors=True)
+
+    def bare(self, name):
+        """Path of the bare git repo behind repo <name> (created with the repo)."""
+        return os.path.join(self.git_root, name + ".git")
+
+    def _new_repo(self, name):
+        self.repos[name] = {"labels": [], "issues": [], "pulls": []}
+        subprocess.run(["git", "init", "--quiet", "--bare", "-b", "main", self.bare(name)],
+                       check=True)
+
+    def pulls(self, repo="bench-fw"):
+        with self.lock:
+            return [dict(p) for p in self.repos.get(repo, {}).get("pulls", [])]
 
     def issues(self, repo="bench-1"):
         with self.lock:
@@ -76,11 +103,77 @@ class FakeForgejo:
                 n = int(self.headers.get("Content-Length") or 0)
                 return json.loads(self.rfile.read(n) or b"{}")
 
+            def _git(self, method, name, sub, query):
+                """Smart HTTP through the real git http-backend, Basic auth only."""
+                auth = self.headers.get("Authorization", "")
+                fake.auth_seen.append(auth)
+                scopes = None
+                if auth.startswith("Basic "):
+                    try:
+                        user, _, tok = base64.b64decode(auth[6:]).decode().partition(":")
+                        scopes = SCOPES.get(tok) if user == OWNER else None
+                    except (ValueError, UnicodeDecodeError):
+                        scopes = None
+                if scopes is None:
+                    self.send_response(401)
+                    self.send_header("WWW-Authenticate", 'Basic realm="fake"')
+                    self.send_header("Content-Length", "0")
+                    self.end_headers()
+                    return None
+                if name not in fake.repos:
+                    return self._send(404, {"message": "no repo"})
+                push = "receive-pack" in sub or "service=git-receive-pack" in query
+                if push and "write:repository" not in scopes:
+                    return self._send(403, {"message": "token does not have scope"})
+                if self.headers.get("Transfer-Encoding", "").lower() == "chunked":
+                    body = b""
+                    while True:
+                        n = int(self.rfile.readline().strip() or b"0", 16)
+                        if n == 0:
+                            self.rfile.readline()
+                            break
+                        body += self.rfile.read(n)
+                        self.rfile.readline()
+                else:
+                    body = self.rfile.read(int(self.headers.get("Content-Length") or 0))
+                env = {"PATH": os.environ.get("PATH", "/usr/bin:/bin"),
+                       "GIT_PROJECT_ROOT": fake.git_root, "GIT_HTTP_EXPORT_ALL": "1",
+                       "PATH_INFO": "/%s.git%s" % (name, sub), "REQUEST_METHOD": method,
+                       "QUERY_STRING": query, "REMOTE_USER": OWNER, "REMOTE_ADDR": "127.0.0.1",
+                       "CONTENT_TYPE": self.headers.get("Content-Type", ""),
+                       "CONTENT_LENGTH": str(len(body))}
+                if self.headers.get("Content-Encoding"):
+                    env["HTTP_CONTENT_ENCODING"] = self.headers["Content-Encoding"]
+                if self.headers.get("Git-Protocol"):
+                    env["GIT_PROTOCOL"] = self.headers["Git-Protocol"]
+                out = subprocess.run(["git", "http-backend"], input=body, env=env,
+                                     capture_output=True).stdout
+                head, _, data = out.partition(b"\r\n\r\n")
+                if not _:
+                    head, _, data = out.partition(b"\n\n")
+                status, headers = 200, []
+                for ln in head.decode("latin-1").splitlines():
+                    k, _, v = ln.partition(":")
+                    if k.lower() == "status":
+                        status = int(v.split()[0])
+                    elif k:
+                        headers.append((k, v.strip()))
+                self.send_response(status)
+                for k, v in headers:
+                    self.send_header(k, v)
+                self.send_header("Content-Length", str(len(data)))
+                self.end_headers()
+                self.wfile.write(data)
+                return None
+
             def _route(self, method):
                 u = urllib.parse.urlsplit(self.path)
                 q = dict(urllib.parse.parse_qsl(u.query))
                 path = u.path
                 fake.calls.append((method, path, q))
+                g = re.fullmatch(r"/%s/([^/]+)\.git(/.*)" % OWNER, path)
+                if g:
+                    return self._git(method, g.group(1), g.group(2), u.query)
                 if path == "/api/v1/version" and method == "GET":
                     return self._send(200, {"version": "16.0.6+fake"})
                 scopes = self._scopes()
@@ -95,7 +188,7 @@ class FakeForgejo:
                     with fake.lock:
                         if name in fake.repos:
                             return self._send(409, {"message": "repo exists"})
-                        fake.repos[name] = {"labels": [], "issues": []}
+                        fake._new_repo(name)
                     return self._send(201, {"name": name, "full_name": "%s/%s" % (OWNER, name)})
                 m = re.fullmatch(r"/api/v1/repos/%s/([^/]+)(/.*)?" % OWNER, path)
                 if not m or m.group(1) not in fake.repos:
@@ -115,6 +208,31 @@ class FakeForgejo:
                                   "color": b.get("color", "")}
                             repo["labels"].append(lb)
                         return self._send(201, lb)
+                if rest == "/pulls":
+                    if "write:repository" not in scopes:
+                        return self._send(403, {"message": "token does not have scope"})
+                    if method == "GET":
+                        with fake.lock:
+                            return self._send(200, [p for p in repo["pulls"]
+                                                    if q.get("state", "open") in
+                                                    ("all", p["state"])])
+                    if method == "POST":
+                        b = self._body()
+                        bare = fake.bare(m.group(1))
+                        for ref in (b.get("head"), b.get("base")):
+                            ok = subprocess.run(["git", "--git-dir", bare, "rev-parse",
+                                                 "--verify", "--quiet", "refs/heads/%s" % ref],
+                                                capture_output=True).returncode == 0
+                            if not ref or not ok:
+                                return self._send(404, {"message": "no branch"})
+                        with fake.lock:
+                            n = len(repo["issues"]) + len(repo["pulls"]) + 1
+                            pr = {"number": n, "title": b["title"], "body": b.get("body", ""),
+                                  "head": {"ref": b["head"]}, "base": {"ref": b["base"]},
+                                  "state": "open", "html_url": "%s/%s/%s/pulls/%d"
+                                  % (fake.base, OWNER, m.group(1), n)}
+                            repo["pulls"].append(pr)
+                        return self._send(201, pr)
                 if "write:issue" not in scopes:
                     return self._send(403, {"message": "token does not have scope"})
                 if rest == "/issues" and method == "POST":

@@ -1,4 +1,5 @@
-"""A small Forgejo API client: the four issue calls plus the setup calls.
+"""A small Forgejo API client: the four issue calls, the setup calls, and the
+code repo calls of the fix beat (create repo, git push, pull request).
 
 Base URL from env LW_TRACKER (default http://127.0.0.1:3000). The token is
 read from a file on every call and only ever placed in the Authorization
@@ -6,14 +7,18 @@ header; it never appears in an exception, a log line or a return value.
 Standard library only (urllib); no proxies, so 127.0.0.1 stays local.
 """
 
+import base64
 import json
 import os
+import subprocess
 import urllib.error
 import urllib.parse
 import urllib.request
 
 DEFAULT_BASE = "http://127.0.0.1:3000"
 DEFAULT_REPO = "labwatch/bench-1"
+DEFAULT_CODE_REPO = "labwatch/bench-fw"
+PUSH_TIMEOUT = 120.0
 DEFAULT_TIMEOUT = 5.0
 
 _OPENER = urllib.request.build_opener(urllib.request.ProxyHandler({}))
@@ -131,6 +136,72 @@ class Forgejo:
 
     def create_repo(self, name):
         return self._call("POST", "/user/repos", {"name": name})
+
+    def ensure_repo(self):
+        """Create self.repo (setup token) unless it exists. True if created."""
+        if self.repo_exists():
+            return False
+        self.create_repo(self.repo.split("/", 1)[1])
+        return True
+
+    # -- code repo: pull requests and git push (setup token) -------------
+    def create_pull(self, title, body, head, base="main"):
+        """Open a pull request; returns (number, html_url)."""
+        r = self._call("POST", "/repos/%s/pulls" % self.repo,
+                       {"title": title, "body": body, "head": head, "base": base})
+        try:
+            return int(r["number"]), str(r.get("html_url") or "")
+        except (TypeError, KeyError, ValueError):
+            raise TrackerError("create pull: no number in reply") from None
+
+    def pulls(self, state="open"):
+        r = self._call("GET", "/repos/%s/pulls" % self.repo, query={"state": state})
+        return r if isinstance(r, list) else []
+
+    def git_url(self):
+        return "%s/%s.git" % (self.base, self.repo)
+
+    def push(self, local_repo, refspecs, timeout=PUSH_TIMEOUT, dry_run=False):
+        """git push local_repo's refspecs to self.repo over HTTP, never forced.
+
+        The token goes to git only as an http.extraHeader set through the
+        GIT_CONFIG_* environment of the git process: never in the URL, never
+        in an argv. Basic auth (owner:token), which Forgejo's git HTTP side
+        accepts for tokens. Raises TrackerError without git's output text;
+        its .rejected is True when the remote refused a non-fast-forward.
+        dry_run still authenticates to receive-pack but writes nothing.
+        """
+        owner = self.repo.split("/", 1)[0]
+        cred = base64.b64encode(("%s:%s" % (owner, _read_token(self.token_file)))
+                                .encode("ascii")).decode("ascii")
+        env = {k: v for k, v in os.environ.items()
+               if not k.lower().endswith("_proxy") and not k.startswith("GIT_CONFIG")}
+        env.update({"GIT_TERMINAL_PROMPT": "0", "GIT_ASKPASS": "", "SSH_ASKPASS": "",
+                    "NO_PROXY": "*", "no_proxy": "*",
+                    "GIT_CONFIG_COUNT": "1", "GIT_CONFIG_KEY_0": "http.extraHeader",
+                    "GIT_CONFIG_VALUE_0": "Authorization: Basic " + cred})
+        argv = ["git", "-C", local_repo, "-c", "credential.helper=", "-c",
+                "http.followRedirects=false", "push", "--quiet", "--porcelain"] + \
+            (["--dry-run"] if dry_run else []) + [self.git_url()] + list(refspecs)
+        if any(r.startswith("+") for r in refspecs):
+            raise TrackerError("push: forced refspecs are not allowed")
+        try:
+            p = subprocess.run(argv, env=env, stdin=subprocess.DEVNULL, capture_output=True,
+                               timeout=timeout)
+        except subprocess.TimeoutExpired:
+            raise TrackerError("push to %s -> timed out" % self.repo) from None
+        except OSError as e:
+            raise TrackerError("push: cannot run git (%s)" % e.__class__.__name__) from None
+        if p.returncode != 0:
+            err = (p.stderr or b"").decode("utf-8", "replace")
+            status = 403 if "403" in err else 401 if "401" in err else None
+            rejected = status is None and ("rejected" in err or "[rejected]" in
+                                           (p.stdout or b"").decode("utf-8", "replace"))
+            hint = "rejected (not a fast-forward)" if rejected else "git exit %d" % p.returncode
+            e = TrackerError("push to %s -> %s" % (self.repo, hint if status is None
+                                                   else "HTTP %d" % status), status)
+            e.rejected = rejected
+            raise e
 
     def labels(self):
         r = self._call("GET", "/repos/%s/labels" % self.repo)
