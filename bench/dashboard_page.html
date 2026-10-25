@@ -1,0 +1,283 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Local Lab Board</title>
+<style>
+:root {
+  --bg: #0b0f14; --panel: #151c25; --line: #2b3746; --text: #e8eef5; --dim: #8a9aab;
+  --ok: #2ecc71; --bad: #ff4040; --warn: #ffb020; --unk: #6b7785; --blue: #2f6fff;
+  --pcb: #1f2a36; --pcb-edge: #9fb2c6;
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; height: 100%; background: var(--bg); color: var(--text);
+  font-family: "DejaVu Sans", "Liberation Sans", Arial, sans-serif; overflow: hidden; }
+body { display: grid; grid-template-rows: auto 1fr auto auto; height: 100vh; }
+#banner { padding: 1.6vh 2vw; font-weight: 800; font-size: 5.2vh; letter-spacing: .02em;
+  display: flex; align-items: center; gap: 2vw; min-height: 11vh; }
+#banner.ok { background: #0f5a2e; color: #eafff1; }
+#banner.bad { background: #b3131b; color: #fff; }
+#banner.warn { background: #7a5200; color: #fff; }
+#banner.unknown { background: #39424d; color: #fff; }
+#banner .causes { font-size: 3vh; font-weight: 600; opacity: .95; }
+#banner .more { font-size: 2.6vh; font-weight: 600; margin-left: auto; opacity: .9; }
+main { display: grid; grid-template-columns: minmax(0, 38fr) minmax(0, 62fr); gap: 1.5vw;
+  padding: 1.5vh 1.5vw; min-height: 0; }
+#boardcol { display: flex; flex-direction: column; min-height: 0; }
+#board { flex: 1; min-height: 0; width: 100%; }
+#meters { display: flex; gap: 1vw; }
+.meter { flex: 1; background: var(--panel); border: 2px solid var(--line); border-radius: 12px;
+  padding: .8vh 1vw; text-align: center; }
+.meter .k { font-size: 2.2vh; color: var(--dim); }
+.meter .v { font-size: 6vh; font-weight: 800; font-variant-numeric: tabular-nums; }
+.meter.bad { border-color: var(--bad); } .meter.bad .v { color: var(--bad); }
+#cards { display: grid; grid-template-columns: 1fr 1fr; grid-auto-rows: 1fr; gap: 1.2vh 1vw;
+  min-height: 0; }
+.card { background: var(--panel); border: 4px solid var(--unk); border-radius: 16px;
+  padding: 1.2vh 1.2vw; display: flex; flex-direction: column; min-height: 0; overflow: hidden; }
+.card.ok { border-color: var(--ok); } .card.bad { border-color: var(--bad);
+  background: #2a1114; } .card.unknown { border-color: var(--unk); }
+.card .top { display: flex; align-items: baseline; justify-content: space-between; gap: 1vw; }
+.card .name { font-size: 4.2vh; font-weight: 800; }
+.card .word { font-size: 4.6vh; font-weight: 900; }
+.card.ok .word { color: var(--ok); } .card.bad .word { color: var(--bad); }
+.card.unknown .word { color: var(--unk); }
+.card .pins { font-size: 2.5vh; color: var(--dim); margin-top: .3vh; }
+.card .inc { font-size: 2.6vh; margin-top: auto; padding-top: .6vh; line-height: 1.35; }
+.card .inc b { color: #ffd0d0; }
+#strip { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 1.5vw;
+  padding: 1vh 1.5vw; background: #10161e; border-top: 2px solid var(--line); }
+#tg .k, #sw .k { font-size: 2vh; color: var(--dim); }
+#tgtext { font-size: 2.5vh; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+#sw .steps { display: flex; gap: 1.6vw; font-size: 3vh; font-weight: 700;
+  font-variant-numeric: tabular-nums; }
+#sw .steps span i { font-style: normal; color: var(--dim); font-weight: 400; font-size: 2.2vh;
+  margin-right: .4vw; }
+footer { padding: .6vh 1.5vw; font-size: 2vh; color: var(--dim); display: flex;
+  justify-content: space-between; }
+svg text { font-family: inherit; }
+</style>
+</head>
+<body>
+<div id="banner" class="unknown"><span id="btext">connecting...</span>
+  <span class="causes" id="bcauses"></span><span class="more" id="bmore"></span></div>
+<main>
+  <div id="boardcol">
+    <svg id="board" viewBox="0 0 520 780" preserveAspectRatio="xMidYMid meet" role="img" aria-label="NUCLEO-F446RE board">
+      <!-- board outline: ST-LINK end at the top, main board below the snap-off line -->
+      <rect x="70" y="40" width="400" height="720" rx="16" fill="#1f2a36"
+            stroke="#9fb2c6" stroke-width="4"/>
+      <line x1="70" y1="215" x2="470" y2="215" stroke="#9fb2c6" stroke-width="2"
+            stroke-dasharray="6 6"/>
+      <rect x="230" y="14" width="80" height="44" rx="5" fill="#b8c2cc" stroke="#e5ebf0"
+            stroke-width="2"/>
+      <text x="270" y="44" text-anchor="middle" font-size="18" fill="#1a2028"
+            font-weight="700">USB</text>
+      <rect x="215" y="100" width="90" height="70" rx="4" fill="#0d1218" stroke="#4a5866"/>
+      <text x="260" y="140" text-anchor="middle" font-size="14" fill="#8a9aab">STM32F103</text>
+      <text x="100" y="92" font-size="22" fill="#e8eef5" font-weight="700">ST-LINK</text>
+      <text x="100" y="200" font-size="16" fill="#8a9aab">NUCLEO-F446RE</text>
+      <!-- MCU -->
+      <rect x="250" y="300" width="130" height="130" rx="6" fill="#0d1218" stroke="#4a5866"
+            stroke-width="2"/>
+      <text x="315" y="360" text-anchor="middle" font-size="17" fill="#c8d2dc"
+            font-weight="700">STM32</text>
+      <text x="315" y="383" text-anchor="middle" font-size="15" fill="#8a9aab">F446RE</text>
+      <!-- buttons -->
+      <g id="b1">
+        <circle id="b1cap" cx="160" cy="290" r="30" fill="#2f6fff" stroke="#cfe0ff"
+                stroke-width="3"/>
+        <text x="160" y="297" text-anchor="middle" font-size="20" fill="#fff"
+              font-weight="800">B1</text>
+        <text id="b1label" x="160" y="345" text-anchor="middle" font-size="20"
+              fill="#e8eef5" font-weight="700">estop</text>
+      </g>
+      <circle cx="420" cy="260" r="20" fill="#111" stroke="#666" stroke-width="3"/>
+      <text x="420" y="265" text-anchor="middle" font-size="14" fill="#ccc">B2</text>
+      <text x="420" y="300" text-anchor="middle" font-size="14" fill="#8a9aab">RESET</text>
+      <!-- CN8 analog header -->
+      <text x="92" y="448" font-size="20" fill="#e8eef5" font-weight="700">CN8</text>
+      <rect x="96" y="462" width="28" height="236" rx="4" fill="#06090c" stroke="#56667a"/>
+      <text x="138" y="485" font-size="20" fill="#e8eef5" font-weight="700">A0</text>
+      <text x="138" y="526" font-size="20" fill="#e8eef5" font-weight="700">A1</text>
+      <text x="138" y="567" font-size="20" fill="#e8eef5" font-weight="700">A2</text>
+      <text x="138" y="608" font-size="20" fill="#e8eef5" font-weight="700">A3</text>
+      <text x="138" y="649" font-size="20" fill="#e8eef5" font-weight="700">A4</text>
+      <text x="138" y="690" font-size="20" fill="#e8eef5" font-weight="700">A5</text>
+      <g id="pins"></g>
+      <g id="wires"></g>
+      <text x="270" y="745" text-anchor="middle" font-size="14" fill="#8a9aab"
+            id="hwhen"></text>
+    </svg>
+    <div id="meters">
+      <div class="meter" id="mvdd"><div class="k">VDD</div><div class="v" id="vdd">--</div></div>
+      <div class="meter" id="mtemp"><div class="k">TEMP</div><div class="v" id="temp">--</div></div>
+    </div>
+  </div>
+  <div id="cards"></div>
+</main>
+<div id="strip">
+  <div id="tg"><div class="k">Last Telegram sent</div><div id="tgtext">--</div></div>
+  <div id="sw"><div class="k" id="swk">Stopwatch</div>
+    <div class="steps"><span><i>fault</i><b id="sw0">--</b></span>
+      <span><i>alert</i><b id="sw1">--</b></span>
+      <span><i>explanation</i><b id="sw2">--</b></span>
+      <span><i>fix PR</i><b id="sw3">--</b></span></div></div>
+</div>
+<footer><span id="foot">All inference on this GB10 (Qwen3.6-35B-A3B on vLLM) - no internet</span>
+  <span id="clock"></span></footer>
+<script>
+"use strict";
+var SVGNS = document.getElementById("board").namespaceURI;
+var PIN_X = 110, PIN_Y0 = 478, PIN_DY = 41;
+var WIRES = [["loopback", 0, 1], ["sensor", 2, 3], ["radio", 4, 5]];
+var ORDER = ["loopback", "sensor", "radio", "estop", "power"];
+var COL = {ok: "#2ecc71", bad: "#ff4040", unk: "#6b7785"};
+
+function el(tag, attrs, parent) {
+  var e = document.createElementNS(SVGNS, tag);
+  for (var k in attrs) e.setAttribute(k, attrs[k]);
+  if (parent) parent.appendChild(e);
+  return e;
+}
+function pinY(i) { return PIN_Y0 + i * PIN_DY; }
+
+var pinsG = document.getElementById("pins"), wiresG = document.getElementById("wires");
+for (var i = 0; i < 6; i++) {
+  el("rect", {x: PIN_X - 8, y: pinY(i) - 8, width: 16, height: 16, fill: "#d4b44a"}, pinsG);
+}
+var wireEls = {};
+WIRES.forEach(function (w) {
+  var y1 = pinY(w[1]), y2 = pinY(w[2]), g = el("g", {}, wiresG);
+  var d = "M" + PIN_X + " " + y1 + " C 10 " + (y1 - 6) + ", 10 " + (y2 + 6) + ", " +
+          PIN_X + " " + y2;
+  var path = el("path", {d: d, fill: "none", "stroke-width": 9, "stroke-linecap": "round"}, g);
+  // the break shown for OPEN: a gap in the middle of the curve
+  var gap = el("g", {}, g);
+  var my = (y1 + y2) / 2;
+  el("line", {x1: 14, y1: my - 9, x2: 40, y2: my - 3, stroke: "#ff4040", "stroke-width": 4},
+     gap);
+  el("line", {x1: 14, y1: my + 9, x2: 40, y2: my + 3, stroke: "#ff4040", "stroke-width": 4},
+     gap);
+  // the ground symbol on the input pin, shown for STUCK
+  var gnd = el("g", {}, g);
+  var gx = PIN_X - 34, gy = y2 + 12;
+  el("line", {x1: gx, y1: y2 + 2, x2: gx, y2: gy + 6, stroke: "#ff4040", "stroke-width": 4},
+     gnd);
+  [[16, 6], [10, 12], [4, 18]].forEach(function (s) {
+    el("line", {x1: gx - s[0], y1: gy + s[1], x2: gx + s[0], y2: gy + s[1], stroke: "#ff4040",
+                "stroke-width": 4}, gnd);
+  });
+  var label = el("text", {x: 214, y: (y1 + y2) / 2 + 8, "font-size": 22, "font-weight": 800},
+                 g);
+  label.textContent = w[0];
+  wireEls[w[0]] = {path: path, gap: gap, gnd: gnd, label: label};
+  setWire(w[0], "UNKNOWN");
+});
+
+function cls(state) {
+  if (state === "OK" || state === "OFF") return "ok";
+  if (state === "UNKNOWN" || !state) return "unknown";
+  return "bad";
+}
+function setWire(name, state) {
+  var w = wireEls[name], c = cls(state);
+  var color = c === "ok" ? COL.ok : c === "bad" ? COL.bad : COL.unk;
+  w.path.setAttribute("stroke", color);
+  w.path.setAttribute("stroke-dasharray", state === "OPEN" ? "16 12" : "none");
+  w.gap.style.display = state === "OPEN" ? "" : "none";
+  w.gnd.style.display = state === "STUCK" ? "" : "none";
+  w.label.setAttribute("fill", color);
+  w.label.textContent = name + (state && state !== "OK" && state !== "UNKNOWN" ? " " + state :
+                                state === "UNKNOWN" ? " ?" : "");
+}
+
+var cardsDiv = document.getElementById("cards"), cardEls = {};
+function div(cls, parent) {
+  var d = document.createElement("div"); d.className = cls; parent.appendChild(d); return d;
+}
+ORDER.forEach(function (n) {
+  var c = div("card unknown", cardsDiv), top = div("top", c);
+  var nm = div("name", top); nm.textContent = n;
+  cardEls[n] = {card: c, word: div("word", top), pins: div("pins", c), inc: div("inc", c)};
+});
+
+function fmtS(v) { return v === null || v === undefined ? "--" : "+" + v.toFixed(1) + " s"; }
+function setText(id, s) { document.getElementById(id).textContent = s; }
+
+function render(st) {
+  var b = st.banner || {level: "unknown", text: "NO DATA"};
+  document.getElementById("banner").className = b.level;
+  setText("btext", st.error ? "NO DATA: " + st.error : b.text);
+  setText("bcauses", (b.causes || []).join(" "));
+  setText("bmore", (b.incident ? "incident #" + b.incident : "") +
+          (b.more ? "  +" + b.more + " more open" : ""));
+
+  var dev = st.devices || {};
+  WIRES.forEach(function (w) { setWire(w[0], (dev[w[0]] || {}).state || "UNKNOWN"); });
+  var es = (dev.estop || {}).state;
+  document.getElementById("b1cap").setAttribute("fill", es === "ON" ? "#ff2020" :
+    es === "OFF" ? "#2f6fff" : "#4a5563");
+  document.getElementById("b1cap").setAttribute("stroke", es === "ON" ? "#ffd0d0" : "#cfe0ff");
+  setText("b1label", es === "ON" ? "estop ON" : es === "OFF" ? "estop" : "estop ?");
+  document.getElementById("b1label").setAttribute("fill", es === "ON" ? "#ff4040" : "#e8eef5");
+
+  setText("vdd", st.vdd === null || st.vdd === undefined ? "--" : st.vdd.toFixed(2) + " V");
+  document.getElementById("mvdd").className = "meter" + (st.vdd_low ? " bad" : "");
+  setText("temp", st.temp === null || st.temp === undefined ? "--" : st.temp.toFixed(1) + " C");
+  var h = st.health;
+  setText("hwhen", h ? "last HEALTH " + h.raw_ts + " (" +
+          Math.max(0, Math.round(st.now - h.t)) + " s ago)" + (st.board ? "  " + st.board : "")
+          : "no HEALTH line yet");
+
+  ORDER.forEach(function (n) {
+    var d = dev[n] || {state: "UNKNOWN", pins: "", mcu: ""}, e = cardEls[n];
+    var c = d.incident ? "bad" : cls(n === "power" && d.state === "LOW" ? "LOW" : d.state);
+    e.card.className = "card " + c;
+    e.word.textContent = d.state === "UNKNOWN" ? "?" : d.state;
+    e.pins.textContent = n === "power" ? "VDD" + (st.vdd != null ? "  " + st.vdd.toFixed(2) +
+      " V" : "") : d.pins + (d.mcu && d.mcu !== d.pins ? "  /  " + d.mcu : "");
+    e.inc.textContent = "";
+    if (d.incident) {
+      var i = d.incident, bold = document.createElement("b");
+      bold.textContent = "Incident #" + i.id + "  " + i.triage;
+      e.inc.appendChild(bold);
+      var parts = [];
+      if (i.alert_s !== null && i.alert_s !== undefined)
+        parts.push("alert sent in " + i.alert_s.toFixed(1) + " s");
+      if (i.ticket) parts.push("ticket #" + String(i.ticket).replace(/^#/, ""));
+      if (parts.length) {
+        e.inc.appendChild(document.createElement("br"));
+        e.inc.appendChild(document.createTextNode(parts.join("  -  ")));
+      }
+    }
+  });
+
+  setText("tgtext", st.telegram ? st.telegram.text : "--");
+  var sw = st.stopwatch;
+  setText("swk", sw ? "Stopwatch - incident #" + sw.incident + " (" + sw.state + ")" :
+          "Stopwatch");
+  setText("sw0", sw && sw.raw_t0 ? sw.raw_t0 + "Z" : "--");
+  setText("sw1", sw ? fmtS(sw.alert_s) : "--");
+  setText("sw2", sw ? fmtS(sw.explain_s) : "--");
+  setText("sw3", sw ? fmtS(sw.fix_s) : "--");
+  if (st.footer) setText("foot", st.footer);
+}
+
+var busy = false;
+function poll() {
+  if (busy) return;
+  busy = true;
+  fetch("state.json", {cache: "no-store"}).then(function (r) { return r.json(); })
+    .then(render).catch(function () {
+      document.getElementById("banner").className = "unknown";
+      setText("btext", "NO DATA: dashboard server not answering");
+    }).then(function () { busy = false; });
+}
+setInterval(poll, 500);
+setInterval(function () { setText("clock", new Date().toLocaleTimeString()); }, 1000);
+poll();
+</script>
+</body>
+</html>
