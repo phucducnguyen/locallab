@@ -19,8 +19,8 @@ there with LW_HOST=172.18.0.1) and LW_PORT (8765).
   printed LW RESULT (and one LW ALIVE) since its last boot. POST /run: a sha
   on main, at most one accepted per 60 s. Both 429 while the hold file
   exists ($LW_HOLD) or the board is busy (a request pending or running, a
-  run in progress, a flash not yet verified, or the link down); 503 while
-  the bench heartbeat is older than 10 s (nobody would act on it).
+  run in progress, a flash not yet verified, the link down, or the bench
+  heartbeat older than 10 s, so nobody would act on it).
 - Responses: parsed fields only, printable ASCII, every string capped at
   120 characters, no serial tail; commit text only under "data".
 
@@ -67,6 +67,7 @@ CREATE TABLE IF NOT EXISTS endpoint_audit (
 """
 
 POST_ROUTES = ("/run", "/board/test")
+BOARD_LINE_KINDS = "('BOOT','ALIVE','HEALTH','RESULT','TEST','REPLY','HARDFAULT')"
 GET_ROUTE_RE = re.compile(r"/(health|board|incidents|runs|events|show)|/(incidents|runs)/[0-9]+")
 
 
@@ -240,7 +241,8 @@ class Endpoint:
         if got is None:
             return 400, {"error": "git show failed"}
         lines, truncated = got
-        return 200, {"ref": ref, "sha": sha, "truncated": truncated, "data": {"diff": lines}}
+        return 200, {"ref": ref, "sha": sha, "file_line": None, "truncated": truncated,
+                     "data": {"diff": lines}}
 
     # ---- POST ----
     def held(self):
@@ -257,7 +259,11 @@ class Endpoint:
             r = c.execute("SELECT MAX(id) FROM events WHERE kind=?", (kind,)).fetchone()
             last[kind] = r[0] or 0
         if last["LINK_DOWN"] > last["LINK_UP"]:
-            return "the link is down"
+            # a bench restarted after the drop logs no LINK_UP: a board line means it is back
+            back = c.execute("SELECT 1 FROM events WHERE id>? AND kind IN %s LIMIT 1"
+                             % BOARD_LINE_KINDS, (last["LINK_DOWN"],)).fetchone()
+            if back is None:
+                return "the link is down"
         ended = max(last["RUN_END"], last["RUN_ABORTED"])
         if last["FLASH_EXPECT"] > max(last["RUN_START"], ended):
             return "a flash is not verified yet"
@@ -307,7 +313,8 @@ class Endpoint:
         now = self.clock()
         hb = c.execute("SELECT t FROM heartbeat WHERE id=1").fetchone()
         if hb is None or now - hb["t"] > self.bench_stale:
-            return 503, {"error": "the bench is not running"}, detail + ": bench down"
+            return 429, {"error": "board busy: the bench is not running"}, \
+                detail + ": bench down"
         why = self.board_busy(c)
         if why:
             return 429, {"error": "board busy: %s" % why}, detail + ": busy"

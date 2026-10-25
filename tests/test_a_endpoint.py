@@ -271,11 +271,22 @@ class EndpointTest(unittest.TestCase):
         st, body = self.req("/run", "POST", {"sha": self.c2})
         self.assertEqual((st, body["error"]), (429, "board busy: a run is in progress"))
 
-    def test_side_effects_503_when_bench_is_down(self):
+    def test_side_effects_429_when_bench_is_down(self):
         self.ready_board()
         self.now[0] += 11
-        self.assertEqual(self.req("/run", "POST", {"sha": self.c2})[0], 503)
-        self.assertEqual(self.req("/board/test", "POST", {"name": "crc32"})[0], 503)
+        st, body = self.req("/run", "POST", {"sha": self.c2})
+        self.assertEqual((st, body["error"]), (429, "board busy: the bench is not running"))
+        self.assertEqual(self.req("/board/test", "POST", {"name": "crc32"})[0], 429)
+
+    def test_link_down_busy_until_link_up_or_a_board_line(self):
+        b = self.ready_board()
+        with self.conn:
+            store.event(self.conn, self.now[0], "nucleo-1", "LINK_DOWN", {})
+        st, body = self.req("/run", "POST", {"sha": self.c2})
+        self.assertEqual((st, body["error"]), (429, "board busy: the link is down"))
+        # a restarted bench logs no LINK_UP; its first board line shows the link is back
+        b.line(self.now[0] + 1, "T", parser.parse_line("LW HEALTH 9 loopback=OK")["records"])
+        self.assertEqual(self.req("/run", "POST", {"sha": self.c2})[0], 202)
 
     # ---- POST /board/test ----
     def test_board_test_names_and_after_result(self):
