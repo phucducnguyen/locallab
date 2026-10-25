@@ -21,6 +21,13 @@ otherwise), check_citations' uncited sentences and unresolved citations,
 "I can't tell", latency and tokens per second. The output dir (outside the
 repo) gets trials.jsonl, summary.json, summary.txt and config.json.
 
+Notes from the first GB10 runs (2026-10-25): the model thinks unless told
+not to, so --think off (the default) sends enable_thinking=false; vLLM's
+aggregate output stayed near 150 tok/s from concurrency 4 to 32, so more
+threads only add latency; the vLLM server is shared with live board tests,
+so keep --concurrency at 8 or less and let ~/lw-sim/PAUSE hold the run.
+It never reads recorded board logs: only the invented records below.
+
 Every value here is invented for the simulation; nothing comes from the
 firmware repo, its logs or any answer key.
 """
@@ -145,6 +152,33 @@ class Gen:
         self.w.health(clock.now(), rng.randint(5, 50000), "OK")
         self.t0 = clock.now() + rng.uniform(60, 7200)
         return clock
+
+    def health(self, clock, n, state, vdd=None):
+        """A HEALTH line, some with the optional vdd=<mV> temp=<C> fields."""
+        if vdd is None and self.rng.random() < 0.4:
+            vdd = self.rng.randint(3240, 3340)
+        if vdd is None:
+            return self.w.health(clock.now(), n, state)
+        temp = self.rng.randint(24, 48)
+        line = "LW HEALTH %d loopback=%s vdd=%d temp=%d" % (n, state, vdd, temp)
+        return self.w.serial(clock.now(), line, "HEALTH", n=n, loopback=state, vdd=vdd, temp=temp)
+
+    def dump(self, clock, bits):
+        """The one-time LW DUMP burst (reg, stack, cause, end) before the first HARDFAULT."""
+        rng = self.rng
+        cls = ("USAGEFAULT" if set(bits) & {"UNDEFINSTR", "NOCP", "INVPC", "UNALIGNED",
+                                             "DIVBYZERO"} else
+               "BUSFAULT" if set(bits) & {"IBUSERR", "PRECISERR", "IMPRECISERR", "STKERR"}
+               else "MEMMANAGE")
+        texts = ["LW DUMP reg " + " ".join("%s=0x%08x" % (r, rng.getrandbits(32))
+                                           for r in ("r0", "r1", "r2", "r3", "r12")),
+                 "LW DUMP stack " + " ".join("0x%08x" % rng.getrandbits(32) for _ in range(4)),
+                 "LW DUMP cause %s" % cls, "LW DUMP end"]
+        out = []
+        for t in texts:
+            clock.wait(0.01)
+            out.append(self.w.serial(clock.now(), t, "DUMP", part=t.split()[2]))
+        return out
 
     def file_line(self):
         name = self.rng.choice(("src/demo.c", "src/demo_io.c", "src/demo2.c", "src/demo_task.c",
@@ -287,12 +321,12 @@ def v_stuck(g):
     g.pass_run()
     clock = g.clock()
     n = _health_n(g)
-    g.w.health(clock.now(), n, "OK")
+    g.health(clock, n, "OK")
     clock.wait(1.0)
-    first = g.w.health(clock.now(), n + 1, "STUCK")
+    first = g.health(clock, n + 1, "STUCK")
     t_first = clock.now()
     clock.wait(1.0)
-    second = g.w.health(clock.now(), n + 2, "STUCK")
+    second = g.health(clock, n + 2, "STUCK")
     reason = ("loopback=STUCK on 2 lines in a row on %s, which passed with loopback OK; "
               "no reflash since." % g.sha_pass)
     clock.wait(0.5)
@@ -312,7 +346,7 @@ def v_link_down(g):
     last = None
     for k in range(g.rng.randint(1, 4)):
         clock.wait(1.0)
-        last = g.w.health(clock.now(), n + k, "OK")
+        last = g.health(clock, n + k, "OK")
     clock.wait(g.rng.uniform(0.2, 0.9))
     port = "/dev/ttyACM%d" % g.rng.randint(0, 3)
     t_gone = clock.now()
@@ -340,6 +374,107 @@ def v_reboot_pin(g):
     return "incident", iid, None, ("HARDWARE", "REBOOT", None), "reset"
 
 
+def v_brownout(g):
+    g.pass_run()
+    clock = g.clock()
+    n = _health_n(g)
+    vdd = g.rng.randint(3250, 3330)
+    lines = []
+    for k in range(g.rng.randint(2, 4)):
+        clock.wait(1.0)
+        lines.append(g.health(clock, n + k, "OK", vdd=vdd))
+        vdd -= g.rng.randint(250, 450)
+    clock.wait(g.rng.uniform(0.2, 0.9))
+    boot = g.boot(clock, g.sha_pass, reset="BOR", csr="0x0a000000")
+    low = lines[-1]["line"].split("vdd=")[1].split()[0]
+    reason = ("BOOT with reset=BOR that the bench did not cause, after vdd=%s, on %s, which "
+              "passed; no reflash since." % (low, g.sha_pass))
+    ev = {"lines": lines[-2:] + [boot], "fields": {"reset": ["BOR"], "vdd": int(low)},
+          "device": "power", "power": {"vdd": int(low)}}
+    iid = g.w.open_incident(clock.now(), "HEALTH_FAIL", "HARDWARE", reason, ev,
+                            firmware=g.sha_pass, last_pass=g.last_pass(), t_first_bad=clock.now())
+    return "incident", iid, None, ("HARDWARE", "HEALTH_FAIL", None), "power"
+
+
+DEVICE_PINS = {"loopback": "A0-A1", "sensor": "A2-A3", "radio": "A4-A5", "estop": "B1"}
+
+
+def v2_health(g, clock, n, sensor="OK", radio="OK", estop="OFF", vdd=None):
+    """A firmware grammar v2 HEALTH line: every link, the estop and the supply."""
+    vdd = g.rng.randint(3240, 3340) if vdd is None else vdd
+    temp = g.rng.randint(24, 48)
+    line = ("LW HEALTH %d loopback=OK sensor=%s radio=%s estop=%s vdd=%d temp=%d"
+            % (n, sensor, radio, estop, vdd, temp))
+    return g.w.serial(clock.now(), line, "HEALTH", n=n, loopback="OK", sensor=sensor,
+                      radio=radio, estop=estop, vdd=vdd, temp=temp)
+
+
+def _device_link(g, dev):
+    g.pass_run()
+    clock = g.clock()
+    n = _health_n(g)
+    state = g.rng.choice(("OPEN", "STUCK"))
+    v2_health(g, clock, n)
+    lines = []
+    for k in (1, 2):
+        clock.wait(1.0)
+        lines.append(v2_health(g, clock, n + k, **{dev: state}))
+    vdd = int(lines[-1]["line"].split("vdd=")[1].split()[0])
+    reason = ("%s link %s (%s) on 2 lines in a row on %s, which passed with all links OK; "
+              "no reflash since." % (dev, state, DEVICE_PINS[dev], g.sha_pass))
+    ev = {"lines": lines, "device": dev, "pins": DEVICE_PINS[dev], "power": {"vdd": vdd},
+          "fields": {dev: state}}
+    iid = g.w.open_incident(clock.now(), "HEALTH_FAIL", "HARDWARE", reason, ev,
+                            firmware=g.sha_pass, last_pass=g.last_pass(), t_first_bad=clock.now())
+    return "incident", iid, None, ("HARDWARE", "HEALTH_FAIL", None), dev
+
+
+def v_sensor_link(g):
+    return _device_link(g, "sensor")
+
+
+def v_radio_link(g):
+    return _device_link(g, "radio")
+
+
+def v_estop(g):
+    g.pass_run()
+    clock = g.clock()
+    n = _health_n(g)
+    v2_health(g, clock, n)
+    clock.wait(1.0)
+    on = v2_health(g, clock, n + 1, estop="ON")
+    reason = ("emergency stop pressed on board %s (button B1): an operator action, not a "
+              "fault; it resolves when the button is released." % g.board)
+    ev = {"lines": [on], "device": "estop", "pins": "B1", "fields": {"estop": "ON"}}
+    iid = g.w.open_incident(clock.now(), "ESTOP", "HARDWARE", reason, ev, firmware=g.sha_pass,
+                            last_pass=g.last_pass(), t_first_bad=clock.now())
+    if g.rng.random() < 0.4:
+        clock.wait(g.rng.uniform(3, 120))
+        v2_health(g, clock, n + 2, estop="OFF")
+        g.w.resolve(clock.now(), iid)
+    return "incident", iid, None, ("HARDWARE", "ESTOP", None), "operator"
+
+
+def v_power_low(g):
+    g.pass_run()
+    clock = g.clock()
+    n = _health_n(g)
+    v2_health(g, clock, n)
+    lines, vdds = [], []
+    for k in (1, 2):
+        clock.wait(1.0)
+        vdds.append(g.rng.randint(2620, 2990))
+        lines.append(v2_health(g, clock, n + k, vdd=vdds[-1]))
+    reason = ("Board %s power is low: vdd %d then %d mV on 2 lines in a row (below 3000 mV) "
+              "on verified sha %s." % (g.board, vdds[0], vdds[1], g.sha_pass))
+    ev = {"lines": lines, "device": "power", "power": {"vdd": vdds[-1]},
+          "fields": {"vdd": vdds}}
+    iid = g.w.open_incident(clock.now(), "HEALTH_FAIL", "HARDWARE", reason, ev,
+                            firmware=g.sha_pass, last_pass=g.last_pass(), t_first_bad=clock.now())
+    return "incident", iid, None, ("HARDWARE", "HEALTH_FAIL", None), "power"
+
+
 def _new_run_start(g):
     g.pass_run()
     clock = g.clock()
@@ -355,6 +490,8 @@ def v_hardfault(g):
     lines = [boot] + g.tests(clock, SELF_TESTS[:k])
     regs, bits = g.regs()
     hf = "LW HARDFAULT " + " ".join("%s=%s" % kv for kv in regs.items())
+    if g.rng.random() < 0.5:
+        lines += g.dump(clock, bits)
     clock.wait(0.05)
     first = g.w.serial(clock.now(), hf, "HARDFAULT", **regs)
     t_first = clock.now()
@@ -487,7 +624,9 @@ def v_run_pass(g):
 
 
 VARIANTS = {"jumper": v_jumper, "recover": v_recover, "flap": v_flap, "stuck": v_stuck,
-            "link_down": v_link_down, "reboot_pin": v_reboot_pin, "hardfault": v_hardfault,
+            "link_down": v_link_down, "brownout": v_brownout,
+            "sensor_link": v_sensor_link, "radio_link": v_radio_link, "estop": v_estop,
+            "power_low": v_power_low, "reboot_pin": v_reboot_pin, "hardfault": v_hardfault,
             "run_fail_code": v_run_fail_code, "loopback_unknown": v_loopback_unknown,
             "silent_unknown": v_silent_unknown, "silent_code": v_silent_code,
             "silent_hw": v_silent_hw, "run_unknown": v_run_unknown, "run_pass": v_run_pass}
@@ -557,6 +696,25 @@ def oracle_reply(case):
     return "\n".join(s for s in out if s.strip())
 
 
+KV_RE = re.compile(r"\b([a-z][a-z0-9_]*)=([A-Za-z0-9_.,+-]*[A-Za-z0-9])")
+HEX_RE = re.compile(r"\b0x[0-9a-fA-F]{4,8}\b")
+
+
+def invented_values(case, text):
+    """key=value pairs and hex values in the reply that no record or diff line holds."""
+    blob = json.dumps([case["record"], case["show"]])
+    bad = []
+    for m in KV_RE.finditer(text):
+        k, v = m.groups()
+        forms = (m.group(0), "%s %s" % (k, v), '"%s": %s' % (k, v), '"%s": "%s"' % (k, v))
+        if not any(f in blob for f in forms):
+            bad.append(m.group(0))
+    for m in HEX_RE.finditer(text):
+        if m.group(0).lower() not in blob.lower():
+            bad.append(m.group(0))
+    return bad
+
+
 def score(case, text):
     """Every per-trial number the summary needs."""
     exp = case["expect"]
@@ -593,6 +751,7 @@ def score(case, text):
          "cite_clean": not bad_uncited and not rep["unresolved"],
          "cite_strict": rep["ok"],
          "cant_tell": bool(CANT_TELL_RE.search(text)),
+         "invented": invented_values(case, text)[:8],
          "unresolved_list": rep["unresolved"][:8],
          "uncited_list": [u["sentence"][:160] for u in bad_uncited[:8]]}
     s["failures"] = failure_categories(s, d, exp)
@@ -615,6 +774,10 @@ def failure_categories(s, d, exp):
         out.append("uncited_sentence")
     if s["unresolved"]:
         out.append("unresolved_citation")
+    if s["invented"]:
+        out.append("invented_value")
+    if d and not exp["commit"] and d["commit"] != "none":
+        out.append("commit_named_for_%s" % exp["triage"])
     return out
 
 
@@ -724,6 +887,7 @@ def summarize(trials):
                 "cite_clean": pct(sum(t["cite_clean"] for t in ok), n),
                 "cite_strict": pct(sum(t["cite_strict"] for t in ok), n),
                 "cant_tell": pct(sum(t["cant_tell"] for t in ok), n),
+                "values_exact": pct(sum(not t.get("invented") for t in ok), n),
                 "unresolved_per_trial": round(sum(t["unresolved"] for t in ok) / n, 2) if n else None,
                 "p50_s": quantile(lat, 0.5), "p95_s": quantile(lat, 0.95),
                 "tok_s_p50": quantile(tps, 0.5)}
@@ -740,7 +904,7 @@ def summarize(trials):
 
 
 COLS = ("n", "errors", "label_acc", "format_rate", "verdict_acc", "commit_acc", "cite_clean",
-        "cite_strict", "cant_tell", "p50_s", "p95_s", "tok_s_p50")
+        "cite_strict", "values_exact", "cant_tell", "p50_s", "p95_s", "tok_s_p50")
 
 
 def table(summary):

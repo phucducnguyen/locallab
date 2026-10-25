@@ -10,6 +10,7 @@ Standard library only (urllib); no proxies, so 127.0.0.1 stays local.
 import base64
 import json
 import os
+import re
 import subprocess
 import urllib.error
 import urllib.parse
@@ -20,6 +21,8 @@ DEFAULT_REPO = "labwatch/bench-1"
 DEFAULT_CODE_REPO = "labwatch/bench-fw"
 PUSH_TIMEOUT = 120.0
 DEFAULT_TIMEOUT = 5.0
+
+_GIT_HTTP_ERR = re.compile(r"(?:returned error|HTTP)[: ]+(40[13])\b")
 
 _OPENER = urllib.request.build_opener(urllib.request.ProxyHandler({}))
 
@@ -194,7 +197,9 @@ class Forgejo:
             raise TrackerError("push: cannot run git (%s)" % e.__class__.__name__) from None
         if p.returncode != 0:
             err = (p.stderr or b"").decode("utf-8", "replace")
-            status = 403 if "403" in err else 401 if "401" in err else None
+            # Only git's own HTTP error text: a bare "401" also matches a port or a sha.
+            m = _GIT_HTTP_ERR.search(err)
+            status = int(m.group(1)) if m else 401 if "Authentication failed" in err else None
             rejected = status is None and ("rejected" in err or "[rejected]" in
                                            (p.stdout or b"").decode("utf-8", "replace"))
             hint = "rejected (not a fast-forward)" if rejected else "git exit %d" % p.returncode

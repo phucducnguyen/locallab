@@ -59,7 +59,7 @@ if __package__ in (None, ""):
     sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from tracker.forgejo import DEFAULT_CODE_REPO, Forgejo, TrackerError, secrets_dir  # noqa: E402
-from tracker.mirror import clean, connect, connect_state, default_db  # noqa: E402
+from tracker.mirror import add_alert, clean, connect, connect_state, default_db  # noqa: E402,F401
 
 EXIT_OK, EXIT_NOT_ELIGIBLE, EXIT_REJECTED, EXIT_FAILED, EXIT_PUSH, EXIT_HELD = 0, 2, 3, 4, 5, 6
 
@@ -457,17 +457,6 @@ def connect_fix_state(path):
     conn.executescript(FIX_SCHEMA)
     conn.commit()
     return conn
-
-
-def add_alert(db, iid, transition, text, t):
-    """One outbox row replying to the incident's open alert; None if that transition exists."""
-    r = db.execute("SELECT id FROM alerts WHERE incident_id=? AND transition='open'",
-                   (iid,)).fetchone()
-    cur = db.execute("INSERT OR IGNORE INTO alerts (incident_id, transition, text, "
-                     "reply_to_alert_id, created) VALUES (?, ?, ?, ?, ?)",
-                     (iid, transition, text, r["id"] if r else None, t))
-    db.commit()
-    return cur.lastrowid if cur.rowcount == 1 else None
 
 
 def fence(text):
