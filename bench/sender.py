@@ -9,7 +9,11 @@ so a sent row is never sent again). If Telegram is unreachable the row stays
 unsent and is retried with a short backoff. It never calls getUpdates.
 
 Watcher health (lane A item 10): if the bench's heartbeat is older than 10 s
-it posts "Lab Watch is blind: bench down since T" once per outage.
+it posts "Lab Watch is blind: bench down since T" once per outage. When the
+bench has logged LINK_DOWN (the USB port gone) and no LINK_UP for 10 s it
+posts "Lab Watch is not watching bench-1: link down since T" once, and on
+the LINK_UP after it "Lab Watch: bench-1 link back after N s" once. Each is
+keyed in watcher_posts, so a restarted sender never posts it again.
 
 The token and chat id are read from files in the secrets dir
 ($LW_SECRETS_DIR, default ~/.config/labwatch/): telegram_token and
@@ -33,6 +37,9 @@ DEFAULT_SECRETS = "~/.config/labwatch/"
 INTERVAL_S = 0.2
 HTTP_TIMEOUT_S = 5.0
 BLIND_AFTER_S = 10.0
+LINK_DOWN_AFTER_S = 10.0
+LINK_HISTORY_S = 60.0
+BENCH_NAME = "bench-1"
 BACKOFF = (0.5, 1.0, 2.0, 5.0)
 TEXT_MAX = 4096
 
@@ -132,10 +139,39 @@ class Sender:
                           "VALUES (?, ?, ?)", ("blind-%.3f" % hb["t"], text, now))
         self.conn.commit()
 
+    def _watcher_post(self, key, text, now):
+        self.conn.execute("INSERT OR IGNORE INTO watcher_posts (key, text, created) "
+                          "VALUES (?, ?, ?)", (key, text, now))
+        self.conn.commit()
+
+    def check_link(self, now):
+        down = self.conn.execute("SELECT id, t_wall FROM events WHERE kind='LINK_DOWN' "
+                                 "ORDER BY id DESC LIMIT 1").fetchone()
+        if down is None:
+            return
+        # LINK_UP, or any board line: a bench restarted after the drop logs no LINK_UP
+        up = self.conn.execute("SELECT id, t_wall FROM events WHERE id>? AND kind IN "
+                               "('LINK_UP','BOOT','ALIVE','HEALTH','RESULT','TEST','REPLY',"
+                               "'HARDFAULT') ORDER BY id LIMIT 1", (down["id"],)).fetchone()
+        until = now if up is None else up["t_wall"]
+        if until - down["t_wall"] < LINK_DOWN_AFTER_S:
+            return  # a short drop (or a replug): no watcher post
+        key = "linkdown-%d" % down["id"]
+        if up is not None and now - up["t_wall"] > LINK_HISTORY_S and not self.conn.execute(
+                "SELECT 1 FROM watcher_posts WHERE key=?", (key,)).fetchone():
+            return  # an old outage from before this sender ran: history, not news
+        self._watcher_post(key,
+                           "Lab Watch is not watching %s: link down since %s UTC"
+                           % (BENCH_NAME, wall_ts(down["t_wall"])), now)
+        if up is not None:
+            self._watcher_post("linkup-%d" % down["id"], "Lab Watch: %s link back after %d s"
+                               % (BENCH_NAME, round(up["t_wall"] - down["t_wall"])), now)
+
     def step(self):
         """One drain pass; returns the number of messages Telegram accepted."""
         now = self.clock()
         self.check_heartbeat(now)
+        self.check_link(now)
         sent = 0
         rows = self.conn.execute("SELECT * FROM alerts WHERE sent IS NULL ORDER BY id").fetchall()
         for row in rows:
