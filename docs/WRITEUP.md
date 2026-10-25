@@ -1,7 +1,7 @@
-# Lab Watch
+# LocalLab
 
 A hardware-in-the-loop watcher for a firmware test bench, running entirely on one NVIDIA GB10.
-When a board on the bench goes wrong, Lab Watch says within seconds whether to call the hardware
+When a board on the bench goes wrong, LocalLab says within seconds whether to call the hardware
 people or the firmware people, explains why with evidence, and files the ticket.
 
 ## The problem

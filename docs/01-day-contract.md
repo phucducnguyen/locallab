@@ -1,4 +1,4 @@
-# Lab Watch: the day contract (Sun Oct 25 2026)
+# LocalLab (internal name Lab Watch): the day contract (Sun Oct 25 2026)
 
 The decisions every lane builds against today. Written in the main checkout at 10:30. Everything
 here is PROPOSED until its Sunday check passes on the real board. To change it, a lane proposes the

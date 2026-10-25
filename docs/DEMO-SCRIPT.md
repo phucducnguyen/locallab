@@ -1,4 +1,4 @@
-# Lab Watch demo script
+# LocalLab demo script
 
 Three minutes, five beats, then the additions for a five-minute slot. Lines in quotes are what
 Patrick says. Commands run in the GB10 console. Numbers come only from today's scoring log; every
@@ -9,7 +9,7 @@ Patrick says. Commands run in the GB10 console. Numbers come only from today's s
 | Pane | What it shows |
 | --- | --- |
 | Dashboard | Firefox full screen on the GB10 monitor, http://127.0.0.1:8770/: the board drawing, a plain headline, the incident timeline |
-| GB10 console | tmux session `lw-demo`: bench log on top, a free shell below |
+| GB10 console | tmux session `lw-demo`: status view (board, incidents, stopwatch) on top; bench log and Telegram + tracker log below |
 | Telegram | group HackathonGB10SF, on the laptop: short alerts, then the board photo, then the 🧠 explanation |
 | Tracker | http://127.0.0.1:3000/labwatch/bench-1/issues, in a browser on the GB10 |
 | Timer | a stopwatch from fault to first alert, next to Telegram |
@@ -35,7 +35,7 @@ that it is a recording.
 
 - **On screen:** the dashboard all green with its plain headline; Telegram and the tracker quiet.
   Board in camera.
-- **Say:** "{{PATRICK_STORY_ONE_LINE}} Lab Watch answers the first question for you: hardware or
+- **Say:** "{{PATRICK_STORY_ONE_LINE}} LocalLab answers the first question for you: hardware or
   code, and who to call."
 - **Type:** nothing.
 - **Fallback:** none needed; keep talking.
@@ -62,7 +62,7 @@ that it is a recording.
 - **On screen:** the shell pane of `lw-demo`, then the dashboard, Telegram, tracker.
 - **Type:**
   ```bash
-  git -C ~/bench-fw fetch -q ~/fw refs/remotes/origin/bug/hardfault && git -C ~/bench-fw -c user.name="Lab Watch bench" -c user.email=lw@example.invalid cherry-pick FETCH_HEAD
+  git -C ~/bench-fw fetch -q ~/fw refs/remotes/origin/bug/hardfault && git -C ~/bench-fw -c user.name="LocalLab bench" -c user.email=lw@example.invalid cherry-pick FETCH_HEAD
   ```
 - **Say:** "A teammate lands a commit. The bench's watcher flashes it, waits for the board to confirm the
   new sha, three self-tests pass, and then it crashes." When the alert lands: "Board 1: the new
