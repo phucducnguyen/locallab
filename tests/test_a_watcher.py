@@ -146,7 +146,7 @@ class WatcherHealthTest(unittest.TestCase):
         for t in (1005.0, 1011.0, 1030.0):
             self.now[0] = t
             s.step()
-        self.assertEqual(self.texts(), ["Local Lab is blind: bench down since 00:16:40.000 UTC"])
+        self.assertEqual(self.texts(), ["⚠️ Local Lab is blind: bench down since 00:16:40.000 UTC"])
 
     def test_short_drop_posts_nothing(self):
         s = self.sender()
@@ -164,14 +164,14 @@ class WatcherHealthTest(unittest.TestCase):
         for t in (1010.0, 1012.0, 1015.0):
             self.step_at(s, t)
         self.assertEqual(self.texts(), [
-            "Local Lab is not watching bench-1: link down since 00:16:40.000 UTC"])
+            "⚠️ Local Lab is not watching bench-1: link down since 00:16:40.000 UTC"])
         self.link("LINK_UP", 1020.4)
         self.step_at(s, 1021.0)
         self.step_at(s, 1022.0)
         s2 = self.sender()                          # a restarted sender says nothing again
         self.step_at(s2, 1023.0)
-        self.assertEqual(self.texts()[1:], ["Local Lab: bench-1 link back after 20 s"])
-        self.assertEqual(self.out.getvalue().count("WATCHER Local Lab: bench-1 link back"), 1)
+        self.assertEqual(self.texts()[1:], ["⚠️ Local Lab: bench-1 link back after 20 s"])
+        self.assertEqual(self.out.getvalue().count("WATCHER ⚠️ Local Lab: bench-1 link back"), 1)
 
     def test_board_line_after_restart_counts_as_link_back(self):
         s = self.sender()
@@ -185,8 +185,8 @@ class WatcherHealthTest(unittest.TestCase):
         self.link("ALIVE", 1055.0)                  # long drop, then a board line
         self.step_at(s, 1056.0)
         self.assertEqual(self.texts(), [
-            "Local Lab is not watching bench-1: link down since 00:17:20.000 UTC",
-            "Local Lab: bench-1 link back after 15 s"])
+            "⚠️ Local Lab is not watching bench-1: link down since 00:17:20.000 UTC",
+            "⚠️ Local Lab: bench-1 link back after 15 s"])
 
     def test_old_outage_is_history(self):
         self.link("LINK_DOWN", 100.0)

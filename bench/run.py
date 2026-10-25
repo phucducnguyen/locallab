@@ -145,6 +145,14 @@ class ExplainWorker:
             with conn:
                 aid = store.add_alert(conn, iid, "explain", alerts.explain_text(iid, text),
                                       time.time())
+                if ok:  # the full answer stays readable (dashboard, status view, evidence)
+                    row = conn.execute("SELECT evidence FROM incidents WHERE id=?",
+                                       (iid,)).fetchone()
+                    if row is not None:
+                        ev = json.loads(row["evidence"] or "{}")
+                        ev["explanation"] = text
+                        conn.execute("UPDATE incidents SET evidence=? WHERE id=?",
+                                     (store.dumps(ev), iid))
         finally:
             conn.close()
         self.log("bench: incident %d explanation %s (alert %s)" % (
@@ -413,6 +421,12 @@ class Bench:
         if extras:  # device, pins, pin_in, power, dump at the top level (I2)
             ev.update(extras(inc))
         ev.setdefault("file_line", None)
+        if "explanation" not in ev and getattr(inc, "db_id", None):
+            row = self.conn.execute("SELECT evidence FROM incidents WHERE id=?",
+                                    (inc.db_id,)).fetchone()
+            old = json.loads(row["evidence"] or "{}") if row else {}
+            if isinstance(old, dict) and old.get("explanation"):
+                ev["explanation"] = old["explanation"]  # written by the explain worker
         inc.evidence = ev
         return store.dumps(ev)
 
@@ -674,14 +688,7 @@ class Bench:
                                     list(self.m.recent.values()) if x.db_id == i), None)
                         if inc is not None and isinstance(getattr(inc, "evidence", None), dict):
                             inc.evidence.update(ev)
-                        lines = ["LOCAL LAB incident %d decode" % i]
-                        fault = decode.fault_alert_line(ev)
-                        if fault:
-                            lines.append(fault)
-                        if ev.get("file_line"):
-                            lines.append("File: %s" % ev["file_line"])
-                        lines.append("Incident: %d" % i)
-                        store.add_alert(self.conn, i, "decode", "\n".join(lines), t)
+                        store.add_alert(self.conn, i, "decode", alerts.decode_text(i, ev), t)
 
     # ---- requests (bench.requests) ----
     def _start_job(self, sha):

@@ -81,9 +81,8 @@ class TestDecodeAndDump(unittest.TestCase):
         self.assertLess(time.monotonic() - t0, 1.0)
         al = r.rows("SELECT * FROM alerts WHERE transition='open'")
         self.assertEqual(len(al), 1)
-        self.assertIn("Fault: ", al[0]["text"])
-        self.assertIn("in fault_here()", al[0]["text"])
-        self.assertIn("File: /src/app/main.c:42", al[0]["text"])
+        self.assertIn("made it crash", al[0]["text"])
+        self.assertIn("Details: /src/app/main.c:42.", al[0]["text"])
         inc = r.rows("SELECT * FROM incidents")[0]
         self.assertEqual(inc["kind"], "HARDFAULT")
         ev = json.loads(inc["evidence"])
@@ -123,8 +122,8 @@ class TestDecodeAndDump(unittest.TestCase):
             time.sleep(0.05)
         dec = r.rows("SELECT * FROM alerts WHERE transition='decode'")
         self.assertEqual(len(dec), 1)
-        self.assertIn("Fault: ", dec[0]["text"])
-        self.assertIn("File: /src/app/main.c:42", dec[0]["text"])
+        self.assertIn("Found where the code crashed", dec[0]["text"])
+        self.assertIn("Details: /src/app/main.c:42", dec[0]["text"])
         ev = json.loads(r.rows("SELECT evidence FROM incidents")[0]["evidence"])
         self.assertEqual(ev["file_line"], "/src/app/main.c:42")
 
@@ -309,7 +308,7 @@ class TestPty(unittest.TestCase):
         inc = self.rows("SELECT * FROM incidents")
         self.assertEqual([(i["kind"], i["triage"]) for i in inc], [("RUN_FAIL", "CODE")])
         al = self.rows("SELECT * FROM alerts WHERE transition='confirmed'")[0]
-        self.assertIn("CONFIRMED CODE", al["text"])
+        self.assertIn("It is the code, not the board.", al["text"])
         self.assertEqual(self.rows("SELECT verified_sha FROM bench_state")[0]["verified_sha"],
                          self.good)
         self.assertFalse(self.bench.confirming)
