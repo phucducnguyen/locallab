@@ -1,11 +1,15 @@
-"""The API half of tracker/setup_forgejo.sh: repo bench-1, its labels, the label ids.
+"""The API half of tracker/setup_forgejo.sh: repo bench-1, its labels, the label ids, code repo.
 
-    python3 -m tracker.setup_api [--secrets-dir DIR]
+    python3 -m tracker.setup_api [--secrets-dir DIR] [--code-repo labwatch/bench-fw]
+                                 [--fw-repo ~/bench-fw | --no-code-repo]
 
 Uses the setup token (DIR/tracker_setup_token). Creates repo bench-1 and the
 labels hardware, firmware, needs-triage only when missing, reads the label ids
-back and writes DIR/tracker_labels.json only when its content changes. A
-second run changes nothing. Never prints a token.
+back and writes DIR/tracker_labels.json only when its content changes. Then
+the code repo for the fix beat's pull requests (labwatch/bench-fw): created
+when missing, and the bench repo's main pushed to it (never forced; a remote
+main that is not an ancestor stops with an error). A second run changes
+nothing. Never prints a token.
 """
 
 import argparse
@@ -16,7 +20,8 @@ import sys
 if __package__ in (None, ""):
     sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from tracker.forgejo import DEFAULT_REPO, Forgejo, TrackerError, secrets_dir  # noqa: E402
+from tracker.forgejo import (DEFAULT_CODE_REPO, DEFAULT_REPO, Forgejo, TrackerError,  # noqa: E402
+                             secrets_dir)
 
 LABELS = {"hardware": "#d73a4a", "firmware": "#0075ca", "needs-triage": "#fbca04"}
 
@@ -64,14 +69,32 @@ def setup(fj, labels_path, log=print):
     return ids
 
 
+def setup_code_repo(fj, fw_repo, log=print):
+    """Create the code repo when missing and push the bench repo's main to it (fast-forward)."""
+    from tracker.fix import FixError, check_bench_repo
+    try:
+        repo = check_bench_repo(fw_repo)
+    except FixError as e:
+        raise TrackerError(str(e)) from None
+    log("repo %s: %s" % (fj.repo, "created" if fj.ensure_repo() else "exists"))
+    fj.push(repo, ["refs/heads/main:refs/heads/main"])
+    log("repo %s: main pushed from %s (fast-forward only)" % (fj.repo, repo))
+
+
 def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("--secrets-dir", default=secrets_dir())
     ap.add_argument("--repo", default=DEFAULT_REPO)
+    ap.add_argument("--code-repo", default=os.environ.get("LW_CODE_REPO", DEFAULT_CODE_REPO))
+    ap.add_argument("--fw-repo", default=os.environ.get("LW_FW_REPO", "~/bench-fw"))
+    ap.add_argument("--no-code-repo", action="store_true")
     args = ap.parse_args(argv)
-    fj = Forgejo(os.path.join(args.secrets_dir, "tracker_setup_token"), repo=args.repo)
+    token = os.path.join(args.secrets_dir, "tracker_setup_token")
+    fj = Forgejo(token, repo=args.repo)
     try:
         setup(fj, os.path.join(args.secrets_dir, "tracker_labels.json"))
+        if not args.no_code_repo:
+            setup_code_repo(Forgejo(token, repo=args.code_repo, timeout=15.0), args.fw_repo)
     except (TrackerError, OSError) as e:
         print("setup_api: %s" % e, file=sys.stderr)
         return 1

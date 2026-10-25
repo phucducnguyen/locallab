@@ -10,7 +10,9 @@
 # reused as it is, never recreated. Never pulls an image: the image must already be loaded (offline install).
 # Binds the tracker to 127.0.0.1:3000 only. Writes the setup and bench tokens
 # straight to chmod 600 files and never prints them. Idempotent: a second run
-# changes nothing.
+# changes nothing. Also creates the code repo labwatch/bench-fw for the fix
+# beat's pull requests and pushes the bench repo's main (LW_FW_REPO,
+# default ~/bench-fw) to it; LW_NO_CODE_REPO=1 skips that.
 set -euo pipefail
 
 NAME=lw-tracker
@@ -134,7 +136,12 @@ if [ "$HAVE_TOKENS" = no ]; then
     make_token bench write:issue "$SECRETS/tracker_token"
 fi
 
-# 7. Repo bench-1, labels, label ids (with the setup token).
+# 7. Repo bench-1, labels, label ids; code repo bench-fw with ~/bench-fw main
+#    pushed to it (fast-forward only, token in a git env header, never argv).
+#    All with the setup token.
 cd "$REPO_ROOT"
-LW_TRACKER="$BASE" LW_SECRETS_DIR="$SECRETS" python3 -m tracker.setup_api --secrets-dir "$SECRETS"
+CODE_ARGS=()
+[ "${LW_NO_CODE_REPO:-0}" = 1 ] && CODE_ARGS=(--no-code-repo)
+LW_TRACKER="$BASE" LW_SECRETS_DIR="$SECRETS" python3 -m tracker.setup_api --secrets-dir "$SECRETS" \
+    --fw-repo "${LW_FW_REPO:-$HOME/bench-fw}" "${CODE_ARGS[@]}"
 say "done"
