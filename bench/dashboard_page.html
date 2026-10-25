@@ -8,56 +8,95 @@
 :root {
   --bg: #0a0d12; --panel: #141a22; --line: #26313d; --text: #f2f5f8; --dim: #8c99a6;
   --ok: #2ee06f; --bad: #ff3b3b; --warn: #ffb020; --unk: #7a8592;
+  --ai: #b48cff; --aibg: #1a1330;
 }
 * { box-sizing: border-box; }
 html, body { margin: 0; height: 100%; background: var(--bg); color: var(--text);
   font-family: "DejaVu Sans", "Liberation Sans", Arial, sans-serif; overflow: hidden; }
-body { display: grid; grid-template-rows: auto auto 1fr auto auto;
+body { display: grid; grid-template-rows: auto auto minmax(0, 1fr) auto auto;
   grid-template-columns: minmax(0, 1fr); height: 100vh; width: 100vw; }
-#head { padding: 26px 48px 22px; border-bottom: 6px solid var(--unk); background: #161b22; }
+/* explicit rows: #stale is display:none most of the time and would shift the others */
+#head { grid-row: 1; } #stale { grid-row: 2; } main { grid-row: 3; } #aipanel { grid-row: 4; }
+footer { grid-row: 5; }
+#head { padding: 20px 48px 16px; border-bottom: 6px solid var(--unk); background: #161b22; }
 #head.ok { border-color: var(--ok); background: #0c2716; }
 #head.bad { border-color: var(--bad); background: #3a0d10; }
 #head.warn, #head.stop { border-color: var(--warn); background: #33250a; }
-#htext { font-size: 64px; font-weight: 800; line-height: 1.15; }
+#htext { font-size: 60px; font-weight: 800; line-height: 1.15; }
 #head.ok #htext { color: var(--ok); } #head.bad #htext { color: #ff6b6b; }
 #head.warn #htext, #head.stop #htext { color: var(--warn); }
 #head.unknown #htext { color: #c3cbd3; }
-#hsub { font-size: 34px; color: #d0d7de; margin-top: 10px; min-height: 40px; }
+#hsub { font-size: 32px; color: #d0d7de; margin-top: 6px; min-height: 38px; }
+#pipeline { font-size: 30px; color: #d0d7de; margin-top: 6px; white-space: nowrap;
+  overflow: hidden; text-overflow: ellipsis; }
+#pipeline:empty { display: none; }
+#pipeline b { color: var(--text); } #pipeline .ar { color: var(--dim); padding: 0 10px; }
+#pipeline .aiw { color: var(--ai); font-weight: 700; }
 #stale { display: none; background: #3a424c; color: #fff; font-size: 34px; font-weight: 700;
   padding: 12px 48px; }
 #stale.on { display: block; }
 main { display: grid; grid-template-columns: minmax(0, 56fr) minmax(0, 44fr); gap: 40px;
-  padding: 24px 48px; min-height: 0; }
-#board { width: 100%; height: 100%; min-height: 0; }
-#rows { display: flex; flex-direction: column; justify-content: center; gap: 18px; min-height: 0; }
+  grid-template-rows: minmax(0, 1fr); padding: 12px 48px; min-height: 0; overflow: hidden; }
+#board { display: block; width: 100%; height: 100%; min-height: 0; }
+#rows { display: flex; flex-direction: column; justify-content: center; gap: 10px; min-height: 0; }
 .row { display: flex; align-items: center; gap: 24px; background: var(--panel);
-  border-left: 10px solid var(--unk); border-radius: 14px; padding: 14px 24px; }
-.row .ic { flex: none; width: 64px; height: 64px; border-radius: 50%; display: flex;
-  align-items: center; justify-content: center; font-size: 40px; font-weight: 900;
+  border-left: 10px solid var(--unk); border-radius: 14px; padding: 7px 22px; }
+.row .ic { flex: none; width: 52px; height: 52px; border-radius: 50%; display: flex;
+  align-items: center; justify-content: center; font-size: 34px; font-weight: 900;
   color: #0a0d12; background: var(--unk); }
 .row .tx { min-width: 0; overflow: hidden; }
-.row .w { font-size: 38px; font-weight: 700; white-space: nowrap; overflow: hidden;
+.row .w { font-size: 34px; font-weight: 700; white-space: nowrap; overflow: hidden;
   text-overflow: ellipsis; }
 .row .w b { font-weight: 800; }
-.row .t { font-size: 20px; color: var(--dim); margin-top: 2px; }
+.row .t { font-size: 22px; color: var(--dim); margin-top: 2px; }
 .row.ok { border-color: var(--ok); } .row.ok .ic { background: var(--ok); }
 .row.bad { border-color: var(--bad); background: #2a1013; } .row.bad .ic { background: var(--bad); }
 .row.bad .w b { color: #ff6b6b; }
 .row.warn { border-color: var(--warn); } .row.warn .ic { background: var(--warn); }
 .row.warn .w b { color: var(--warn); }
 .row.unknown .w b { color: var(--unk); }
-#tl { padding: 18px 48px 14px; background: #10151c; border-top: 2px solid var(--line); }
-#steps { display: flex; align-items: center; gap: 18px; font-size: 34px; }
-.step { padding: 10px 22px; border-radius: 12px; border: 3px solid var(--line); color: #5d6874;
-  white-space: nowrap; }
-.step.done { color: var(--text); border-color: var(--ok); background: #0c2716; }
-.arrow { color: #5d6874; font-size: 34px; }
-#tlnone { font-size: 32px; color: var(--dim); }
-#explain { font-size: 30px; margin-top: 12px; color: #e3e8ee; min-height: 36px;
-  overflow: hidden; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2;
-  line-height: 1.25; }
-#explain i { font-style: normal; color: var(--dim); }
-footer { padding: 10px 48px; font-size: 24px; color: var(--dim); display: flex;
+#aipanel { display: grid; grid-template-columns: minmax(0, 40fr) minmax(0, 32fr) minmax(0, 28fr);
+  gap: 0; margin: 0 48px 10px; border: 4px solid var(--ai); border-radius: 18px;
+  background: var(--aibg); height: 300px; overflow: hidden; }
+#aipanel.nocite { grid-template-columns: minmax(0, 60fr) minmax(0, 40fr); }
+#aipanel.nocite #aicite { display: none; }
+#aipanel > div { padding: 16px 26px; min-width: 0; overflow: hidden; }
+#aipanel > div + div { border-left: 2px solid #3b2d5c; }
+.aih { font-size: 24px; font-weight: 800; color: var(--ai); letter-spacing: .04em;
+  text-transform: uppercase; margin-bottom: 8px; }
+#aititle { font-size: 32px; font-weight: 800; color: var(--ai); line-height: 1.2; }
+#aibody { font-size: 30px; line-height: 1.25; margin-top: 10px; color: var(--text);
+  overflow: hidden; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 3; }
+#aibody .timer { font-size: 56px; font-weight: 800; color: var(--text);
+  font-variant-numeric: tabular-nums; }
+#aibody .dim { color: var(--dim); font-size: 28px; }
+#ailive { font-size: 28px; margin-top: 10px; color: #d6c9f5; white-space: nowrap;
+  overflow: hidden; text-overflow: ellipsis; font-variant-numeric: tabular-nums; }
+#ailive b { color: var(--ai); }
+.rv { font-size: 30px; line-height: 1.2; margin-bottom: 4px; overflow: hidden;
+  display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; }
+.rv i { font-style: normal; color: var(--dim); }
+#rvverdict { display: inline-block; margin-top: 10px; font-size: 32px; font-weight: 800;
+  padding: 4px 20px; border-radius: 10px; border: 3px solid var(--unk); color: var(--unk); }
+#rvverdict.agrees { color: var(--ok); border-color: var(--ok); background: #0c2716; }
+#rvverdict.differs { color: var(--warn); border-color: var(--warn); background: #33250a; }
+#rvverdict:empty { display: none; }
+#rvnote { font-size: 24px; color: var(--dim); margin-top: 10px; }
+#cites { margin: 0; padding: 0; list-style: none; }
+#cites li { font-size: 24px; line-height: 1.25; margin-bottom: 8px; overflow: hidden;
+  display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; }
+#cites li b { color: var(--ai); }
+#cites li span { color: #c3cbd3; }
+#aiask { display: none; margin-top: 6px; }
+#aiask.on { display: block; }
+#askq { font-size: 26px; font-weight: 700; overflow: hidden; display: -webkit-box;
+  -webkit-box-orient: vertical; -webkit-line-clamp: 2; }
+#aska { font-size: 24px; color: #d6c9f5; margin-top: 4px; overflow: hidden; display: -webkit-box;
+  -webkit-box-orient: vertical; -webkit-line-clamp: 3; }
+#aipanel.nocite.ask { grid-template-columns: minmax(0, 40fr) minmax(0, 32fr) minmax(0, 28fr); }
+#aipanel.nocite.ask #aicite { display: block; }
+#aipanel.nocite #citeh, #aipanel.nocite #cites { display: none; }
+footer { padding: 4px 48px 10px; font-size: 24px; color: #cdbdf5; display: flex;
   justify-content: space-between; }
 #clock { font-variant-numeric: tabular-nums; }
 svg text { font-family: inherit; }
@@ -68,7 +107,7 @@ body.stale main { opacity: .4; }
 </head>
 <body>
 <div id="head" class="unknown"><div id="htext">Waiting for the board&#8230;</div>
-  <div id="hsub"></div></div>
+  <div id="hsub"></div><div id="pipeline"></div></div>
 <div id="stale">Waiting for the board&#8230; no news from it for more than 5 s</div>
 <main>
   <svg id="board" viewBox="0 0 900 780" preserveAspectRatio="xMidYMid meet" role="img"
@@ -110,16 +149,27 @@ body.stale main { opacity: .4; }
     <text id="b1label" x="360" y="292" text-anchor="end" font-size="34" font-weight="800"
           fill="#7a8592">stop button</text>
     <text x="360" y="322" text-anchor="end" font-size="18" fill="#8c99a6">B1 &#183; PC13</text>
+    <g id="aihl"></g>
     <g id="pins"></g>
     <g id="wires"></g>
   </svg>
   <div id="rows"></div>
 </main>
-<div id="tl">
-  <div id="steps"></div>
-  <div id="explain"></div>
-</div>
-<footer><span id="foot">Everything runs on this NVIDIA GB10 &#8212; no internet. Model: Qwen3.6-35B-A3B.</span>
+<section id="aipanel" class="nocite" aria-label="AI at work">
+  <div id="aiwork"><div class="aih">AI at work &#183; local</div>
+    <div id="aititle">&#129504; Qwen3.6-35B-A3B on this GB10</div>
+    <div id="aibody"></div>
+    <div id="ailive">GB10 now: -</div></div>
+  <div id="airule"><div class="aih">Rule vs AI</div>
+    <div class="rv" id="rvrule"><i>Rule:</i> -</div>
+    <div class="rv" id="rvai"><i>AI:</i> -</div>
+    <div id="rvverdict"></div>
+    <div id="rvnote">The rule decides; the AI explains.</div></div>
+  <div id="aicite"><div id="citeh" class="aih">What the AI looked at</div><ul id="cites"></ul>
+    <div id="aiask"><div class="aih">Asked in Telegram</div><div id="askq"></div>
+      <div id="aska"></div></div></div>
+</section>
+<footer><span id="foot">AI inference: 100% on this GB10 (127.0.0.1:8000) &#183; No cloud AI calls &#183; Only outbound traffic: Telegram alerts</span>
   <span id="clock"></span></footer>
 <script>
 "use strict";
@@ -224,35 +274,134 @@ function fmtClock(t) {
 }
 function fmtS(v) { return "+" + (v < 10 ? v.toFixed(1) : Math.round(v)) + " s"; }
 
-function renderTimeline(sw) {
-  var box = document.getElementById("steps");
+function span(parent, cls, text) {
+  var e = document.createElement("span");
+  if (cls) e.className = cls;
+  e.textContent = text;
+  parent.appendChild(e);
+  return e;
+}
+function secs(v) { return (v < 10 ? v.toFixed(1) : Math.round(v)) + " s"; }
+
+// fault -> alert 1.6 s -> AI explained 25 s -> ticket #N -> PR (only the steps reached)
+function renderPipeline(sw) {
+  var box = document.getElementById("pipeline");
   box.textContent = "";
-  if (!sw) {
-    var none = document.createElement("span"); none.id = "tlnone";
-    none.textContent = "No problems so far.";
-    box.appendChild(none);
-    setText("explain", "");
-    return;
-  }
-  var steps = [
-    [has(sw.t0), "Problem seen" + (has(sw.t0) ? " " + fmtClock(sw.t0) : "")],
-    [has(sw.alert_s), "Alert sent" + (has(sw.alert_s) ? " " + fmtS(sw.alert_s) : "")],
-    [has(sw.explain_s), "AI explained" + (has(sw.explain_s) ? " " + fmtS(sw.explain_s) : "")],
-    [has(sw.ticket), "Ticket" + (has(sw.ticket) ? " #" + sw.ticket : "")]];
+  if (!sw) return;
+  var steps = [["", "fault"]];
+  if (has(sw.alert_s)) steps.push(["", "alert " + secs(sw.alert_s)]);
+  if (has(sw.explain_s)) steps.push(["aiw", "AI explained " + secs(sw.explain_s)]);
+  if (has(sw.ticket)) steps.push(["", "ticket #" + sw.ticket]);
+  if (has(sw.fix_s)) steps.push(["", "PR"]);
   steps.forEach(function (s, k) {
-    if (k) { var a = document.createElement("span"); a.className = "arrow";
-             a.textContent = "→"; box.appendChild(a); }
-    var d = document.createElement("span");
-    d.className = "step" + (s[0] ? " done" : "");
-    d.textContent = s[1];
-    box.appendChild(d);
+    if (k) span(box, "ar", "→");
+    var b = document.createElement("b"); if (s[0]) b.className = s[0];
+    b.textContent = s[1]; box.appendChild(b);
   });
-  var ex = document.getElementById("explain");
-  ex.textContent = "";
-  if (sw.explain) {
-    var i = document.createElement("i"); i.textContent = "AI: ";
-    ex.appendChild(i); ex.appendChild(document.createTextNode(sw.explain));
+}
+
+function fmtN(v) { return String(Math.round(v)).replace(/\B(?=(\d{3})+(?!\d))/g, ","); }
+var MODEL = "Qwen3.6-35B-A3B";
+
+function renderAI(ai) {
+  ai = ai || {phase: "idle", live: {}};
+  var lv = ai.live || {}, model = ai.model || MODEL, n = ai.incident;
+  var title = "🧠 " + model + " on this GB10 · waiting for an incident";
+  var body = document.getElementById("aibody");
+  body.textContent = "";
+  if (ai.phase === "pending") {
+    title = "🧠 " + model + " is analysing incident #" + n + " on this GB10";
+    span(body, "timer", "⏱ " + Math.floor(ai.elapsed_s || 0) + " s");
+    span(body, "dim", "  since the alert");
+  } else if (ai.phase === "done") {
+    title = "🧠 " + model + " explained incident #" + n +
+            (has(ai.explain_s) ? " in " + Math.round(ai.explain_s) + " s" : "");
+    body.textContent = ai.answer || "The answer is in the Telegram alert.";
+  } else if (ai.phase === "unavailable" || ai.phase === "late") {
+    title = "🧠 No AI explanation for incident #" + n;
+    span(body, "dim", "The rule's triage stands.");
+  } else if (has(n)) {
+    title = "🧠 " + model + " on this GB10 · incident #" + n + " waiting for its alert";
   }
+  setText("aititle", title);
+  var live = document.getElementById("ailive");
+  live.textContent = "";
+  span(live, "", "GB10 now: ");
+  var b = document.createElement("b");
+  b.textContent = "GPU " + (has(lv.gpu_util) ? Math.round(lv.gpu_util) + " %" : "-");
+  live.appendChild(b);
+  if (has(lv.power_w)) span(live, "", " · " + Math.round(lv.power_w) + " W");
+  span(live, "", " · " + (has(lv.tok_s) ? fmtN(lv.tok_s) : "-") + " tokens/s");
+  if (has(ai.tokens_run)) span(live, "", " · " + fmtN(ai.tokens_run) + " tokens");
+
+  var r = ai.rule, rr = document.getElementById("rvrule"), ra = document.getElementById("rvai");
+  var v = document.getElementById("rvverdict");
+  rr.textContent = ""; ra.textContent = ""; v.textContent = ""; v.className = "";
+  var it = document.createElement("i"); it.textContent = "Rule: "; rr.appendChild(it);
+  var ia = document.createElement("i"); ia.textContent = "AI: "; ra.appendChild(ia);
+  if (!r) {
+    span(rr, "", "no incident yet");
+    span(ra, "", "-");
+  } else {
+    span(rr, "", (r.rule || "?") + (r.rule_route ? " → " + r.rule_route : ""));
+    if (r.status === "ok") {
+      span(ra, "", r.ai + (r.cause ? " (cause: " + r.cause + ")" : ""));
+      v.textContent = r.verdict === "agrees" ? "✓ agrees" : "≠ differs";
+      v.className = r.verdict === "agrees" ? "agrees" : "differs";
+    } else span(ra, "", r.status === "none" ? "no diagnosis" : "working…");
+  }
+
+  var cites = ai.citations || [], ul = document.getElementById("cites");
+  ul.textContent = "";
+  cites.forEach(function (c) {
+    var li = document.createElement("li"), k = document.createElement("b");
+    k.textContent = c.text; li.appendChild(k);
+    if (c.kind === "serial") span(li, "", c.line ? " " + c.line : " (line not in the log)");
+    else if (c.kind === "file") span(li, "", " source line");
+    else if (c.kind === "diff") span(li, "", " change in the commit");
+    else if (c.kind === "incident") span(li, "", " incident record");
+    else if (c.kind === "bit") span(li, "", " fault bit");
+    ul.appendChild(li);
+  });
+  var ask = ai.ask, box = document.getElementById("aiask");
+  box.className = ask && ask.question ? "on" : "";
+  if (ask && ask.question) {
+    setText("askq", "“" + ask.question + "”");
+    var a = "";
+    if (ask.status === "asked") a = "🧠 AI is answering… " + Math.floor(ask.elapsed_s || 0) + " s";
+    else if (ask.status === "answered") a = ask.answer || "(empty answer)";
+    else if (ask.status === "timeout") a = "No answer in time.";
+    else if (ask.status === "failed") a = "The agent could not answer.";
+    setText("aska", a);
+  }
+  document.getElementById("aipanel").className = (cites.length ? "" : "nocite") +
+    (ask && ask.question ? " ask" : "");
+  renderHighlight(ai.highlight || []);
+}
+
+// Violet marks only where the agent's own words name a label in this drawing.
+var HL_PIN = {A0: 0, A1: 1, A2: 2, A3: 3, A4: 4, A5: 5};
+var hlKey = null;
+function renderHighlight(list) {
+  var key = list.join(",");
+  if (key === hlKey) return;
+  hlKey = key;
+  var g = document.getElementById("aihl"), ai = "#b48cff";
+  while (g.firstChild) g.removeChild(g.firstChild);
+  list.forEach(function (h) {
+    if (h in HL_PIN) {
+      el("circle", {cx: PIN_X, cy: pinY(HL_PIN[h]), r: 19, fill: "none", stroke: ai,
+                    "stroke-width": 6}, g);
+    } else if (h === "B1" || h === "PC13" || h === "estop") {
+      el("circle", {cx: 540, cy: 290, r: 46, fill: "none", stroke: ai, "stroke-width": 7}, g);
+    } else if (h === "USB") {
+      el("rect", {x: 600, y: 4, width: 100, height: 64, rx: 8, fill: "none", stroke: ai,
+                  "stroke-width": 6}, g);
+    } else if (wireEls[h]) {
+      el("path", {d: wireEls[h].path.getAttribute("d"), fill: "none", stroke: ai,
+                  "stroke-width": 30, "stroke-linecap": "round", opacity: 0.55}, g);
+    }
+  });
 }
 
 function waiting(sub) {
@@ -304,7 +453,8 @@ function render(st) {
   if (has(st.temp)) setRow("temp", "ok", Math.round(st.temp) + " °C", "on-chip sensor");
   else setRow("temp", "unknown", "unknown", "");
 
-  renderTimeline(st.stopwatch);
+  renderPipeline(st.stopwatch);
+  renderAI(st.ai);
   if (st.footer) setText("foot", st.footer);
 }
 
