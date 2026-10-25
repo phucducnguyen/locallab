@@ -31,6 +31,27 @@ class HealthV2Test(unittest.TestCase):
         r = self.one("LW HEALTH 9 loopback=OK vdd=3311")
         self.assertEqual((r["vdd"], r["temp"]), (3311, None))
 
+    def test_devices_by_key(self):
+        r = self.one("LW HEALTH 7 loopback=OK sensor=OPEN radio=STUCK estop=ON vdd=3290 temp=33")
+        self.assertEqual((r["loopback"], r["sensor"], r["radio"], r["estop"], r["vdd"], r["temp"]),
+                         ("OK", "OPEN", "STUCK", "ON", 3290, 33))
+        self.assertNotIn("extra", r)
+        # Order does not matter; the keys do.
+        r = self.one("LW HEALTH 7 estop=OFF temp=-1 radio=OK loopback=OPEN sensor=OK")
+        self.assertEqual((r["loopback"], r["sensor"], r["radio"], r["estop"], r["temp"]),
+                         ("OPEN", "OK", "OK", "OFF", -1))
+
+    def test_devices_absent_on_old_firmware(self):
+        r = self.one("LW HEALTH 1 loopback=OK")
+        self.assertEqual((r["sensor"], r["radio"], r["estop"]), (None, None, None))
+        self.assertNotIn("invalid", r)
+
+    def test_devices_bad_values(self):
+        r = self.one("LW HEALTH 1 loopback=OK sensor=MAYBE radio=ON estop=OK")
+        self.assertEqual((r["sensor"], r["radio"], r["estop"]), (None, None, None))
+        self.assertEqual(r["invalid"], {"sensor": "MAYBE", "radio": "ON", "estop": "OK"})
+        self.assertNotIn("malformed", r)
+
     def test_negative_temp(self):
         self.assertEqual(self.one("LW HEALTH 2 loopback=OK vdd=3302 temp=-12")["temp"], -12)
 

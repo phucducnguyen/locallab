@@ -7,7 +7,8 @@ Everything else is counted, never interpreted: board text is data.
 
 Nothing here raises on bad input.
 
-Firmware grammar v2 (additions only): HEALTH may carry vdd=<mV> and
+Firmware grammar v2 (additions only): HEALTH may carry sensor=, radio=
+(OK|OPEN|STUCK), estop= (ON|OFF), vdd=<mV> and
 temp=<C> (absent means unknown: None, never 0), and a fault prints a one-time
 "LW DUMP reg|stack|cause|end" burst before the first HARDFAULT line. Unknown
 key=value trailing fields on key=value kinds are kept in rec["extra"]
@@ -33,6 +34,8 @@ _HEX32_RE = re.compile(r"^0x[0-9a-fA-F]{8}$")
 _UINT_RE = re.compile(r"^[0-9]+$")
 _SINT_RE = re.compile(r"^[+-]?[0-9]+$")
 
+HEALTH_DEVICES = {"sensor": ("OK", "OPEN", "STUCK"), "radio": ("OK", "OPEN", "STUCK"),
+                  "estop": ("ON", "OFF")}
 DUMP_REGS = ("r0", "r1", "r2", "r3", "r12", "lr", "pc", "psr")
 DUMP_STACK_MAX_WORDS = 4
 CAUSE_NAMES = frozenset((
@@ -209,11 +212,15 @@ def parse_record(seg):
             # Absent or unreadable means unknown (None), never 0.
             rec["vdd"] = int(vdd) if vdd is not None and _UINT_RE.match(vdd) else None
             rec["temp"] = int(temp) if temp is not None and _SINT_RE.match(temp) else None
-            invalid = {k: v for k, v in (("vdd", vdd), ("temp", temp))
-                       if v is not None and rec[k] is None}
+            # Further devices, by key (older firmware omits them: None).
+            for k, ok in HEALTH_DEVICES.items():
+                v = kv2.get(k)
+                rec[k] = v if v in ok else None
+            invalid = {k: kv2[k] for k in ("vdd", "temp") + tuple(HEALTH_DEVICES)
+                       if kv2.get(k) is not None and rec[k] is None}
             if invalid:
                 rec["invalid"] = invalid
-            _set_extra(rec, rest[1:], ("loopback", "vdd", "temp"))
+            _set_extra(rec, rest[1:], ("loopback", "vdd", "temp") + tuple(HEALTH_DEVICES))
             if rec["n"] is None or rec["loopback"] not in ("OK", "OPEN", "STUCK"):
                 rec["malformed"] = True
         elif kind == "REPLY":
