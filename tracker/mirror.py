@@ -1,4 +1,4 @@
-"""Mirror the bench's routing rows into Forgejo: one issue per incident.
+"""Mirror the bench's routing rows into Forgejo: one issue per problem.
 
     python3 -m tracker.mirror [--db PATH] [--state PATH] [--once] [--interval 2]
 
@@ -7,22 +7,34 @@ operations in an outbox table in this lane's own state DB (default
 tracker_state.db next to the bench DB); replay sends them in order and stops
 while the tracker is down, so no create, comment or close is ever dropped.
 
-- Create: for each routing row without a ticket (and with a route), one issue
-  titled "[lw-<incident id>] <board> <kind>: <triage>", labelled by route, body
-  with the route, the reason, the verified sha and file:line, never source or
-  diff text. The number goes into routing.ticket and incidents.ticket at once.
-- Dedupe: the stored number is the key. Only a create that was sent but whose
-  number was never stored (a crash, a lost reply) is searched for by q=lw-<id>,
-  retried for up to 10 s for the indexer lag; only an exact title match counts.
+- Problem key: board<board>/<device>/<state> (hardware and other triage) or
+  board<board>/CODE/<file:line> (CODE; the kind when no file:line), written
+  in the issue body as the exact line "lw-key: <key>". The state DB's
+  problems table (key -> issue) is the index.
+- Create: a routing row whose problem has no usable issue gets one issue
+  titled "[lw-<incident id>] <board> <kind>: <triage>", labelled by route,
+  body with the route, the reason, the verified sha and file:line, never
+  source or diff text, and the lw-key line.
+- Reuse: an open issue of the same problem gets "happened again at <UTC>,
+  incident <id>, duration <s> s|still open"; one closed under 60 min ago is
+  reopened with that comment. The number goes into routing.ticket and
+  incidents.ticket, and one "ticket" alert row ("Ticket #<n>: <url>",
+  replying to the open alert) is queued per incident; the URL base is
+  LW_TRACKER_PUBLIC.
+- Dedupe after a crash: only a create that was sent but whose number was
+  never stored is searched for by q=lw-<id>, retried for up to 10 s for the
+  indexer lag; only an exact title plus the exact lw-key line counts.
 - Flaps: one comment with the flap count, at most once per 60 s per incident.
-- Resolve: a comment with the duration, then close. An incident that has
-  flapped is closed once it has stayed resolved for the 60 s flap window; a
-  closed issue whose incident reopens is reopened.
+- Resolve: a comment with the duration, then close, but a shared issue closes
+  only when its last open incident resolves. An incident that has flapped is
+  closed once it has stayed resolved for the 60 s flap window; a closed issue
+  whose incident reopens is reopened.
 - Comments carry "(lab watch update <op id>)" so an ambiguous retry is checked
   against the issue's comments instead of posted twice.
 
 Env: LW_DB (bench DB), LW_SECRETS_DIR (tracker_token, tracker_labels.json),
-LW_TRACKER (base URL), LW_TRACKER_STATE (state DB path).
+LW_TRACKER (base URL), LW_TRACKER_PUBLIC (link base in the ticket alert,
+default http://127.0.0.1:3000), LW_TRACKER_STATE (state DB path).
 """
 
 import argparse
@@ -36,7 +48,7 @@ import time
 if __package__ in (None, ""):
     sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from tracker.forgejo import DEFAULT_REPO, Forgejo, TrackerError, secrets_dir  # noqa: E402
+from tracker.forgejo import DEFAULT_BASE, DEFAULT_REPO, Forgejo, TrackerError, secrets_dir  # noqa: E402
 
 ROUTE_LABEL = {"Hardware team": "hardware", "Firmware team": "firmware", "Triage": "needs-triage"}
 SEARCH_WAIT_S = 10.0
@@ -59,6 +71,25 @@ def connect(path):
     conn.execute("PRAGMA journal_mode=WAL")
     conn.execute("PRAGMA busy_timeout=5000")
     return conn
+
+
+def add_alert(db, iid, transition, text, t):
+    """One outbox row replying to the incident's open alert; None if that transition exists."""
+    r = db.execute("SELECT id FROM alerts WHERE incident_id=? AND transition='open'",
+                   (iid,)).fetchone()
+    cur = db.execute("INSERT OR IGNORE INTO alerts (incident_id, transition, text, "
+                     "reply_to_alert_id, created) VALUES (?, ?, ?, ?, ?)",
+                     (iid, transition, text, r["id"] if r else None, t))
+    db.commit()
+    return cur.lastrowid if cur.rowcount == 1 else None
+
+
+def public_base():
+    return os.environ.get("LW_TRACKER_PUBLIC", DEFAULT_BASE).rstrip("/")
+
+
+def ticket_text(number, repo=DEFAULT_REPO):
+    return "Ticket #%d: %s/%s/issues/%d" % (number, public_base(), repo, number)
 
 
 def clean(text, cap=200):
@@ -86,9 +117,68 @@ def _file_line(*evidence_texts):
     return None
 
 
+_DEVICE = re.compile(r"[a-z_]{1,20}")
+_STATE = re.compile(r"\b(OPEN|STUCK|ON|LOW)\b")
+STATE_FALLBACK = "FAIL"
+REOPEN_WITHIN_S = 3600.0
+
+
+def _evidence(text):
+    try:
+        ev = json.loads(text or "{}")
+    except ValueError:
+        return {}
+    return ev if isinstance(ev, dict) else {}
+
+
+def _state_word(v):
+    if isinstance(v, list) and v:
+        v = v[-1]
+    if not isinstance(v, str):
+        return None
+    m = _STATE.search(v)  # case-sensitive: "on" in a sentence is not ON
+    return m.group(1) if m else None
+
+
+def problem_key(row):
+    """One key per problem across incidents, or None for a run-only row.
+
+    Hardware (and any non-CODE triage): board<board>/<device>/<state>; device
+    from the evidence ("loopback" for HEALTH_FAIL, else the kind when absent),
+    state OPEN/STUCK/ON/LOW from the evidence, then the reason, else FAIL.
+    Code: board<board>/CODE/<file:line>, or board<board>/CODE/<kind>.
+    """
+    if row["incident_id"] is None:
+        return None
+    board = "board" + _match(_BOARD, row["board"], "unknown")
+    kind = _match(_WORD, row["kind"], "INCIDENT")
+    ev = _evidence(row["i_evidence"])
+    if _match(_WORD, row["triage"]) == "CODE":
+        return "%s/CODE/%s" % (board, _file_line(row["i_evidence"]) or kind)
+    device = _match(_DEVICE, ev.get("device"))
+    if device is None:
+        device = "loopback" if kind == "HEALTH_FAIL" else kind
+    state = _state_word(ev.get("state")) or _state_word(ev.get(device))
+    if state is None and (device == "power" or "LOW" in str(ev.get("cause") or "").upper()):
+        state = "LOW"
+    if state is None and (device == "estop" or kind == "ESTOP"):
+        state = "ON"
+    if state is None:
+        state = _state_word(clean(row["reason"])) or STATE_FALLBACK
+    return "%s/%s/%s" % (board, device, state)
+
+
+def marker(pkey):
+    return "lw-key: %s" % pkey
+
+
+def utc(t):
+    return time.strftime("%Y-%m-%d %H:%M:%S UTC", time.gmtime(float(t)))
+
+
 ROWS = """
 SELECT r.id, r.incident_id, r.run_id, r.triage, r.route, r.reason,
-       i.board, i.kind, i.firmware, i.evidence AS i_evidence,
+       i.board, i.kind, i.firmware, i.evidence AS i_evidence, i.opened,
        ru."commit" AS run_commit, ru.verdict, ru.evidence AS r_evidence
 FROM routing r
 LEFT JOIN incidents i ON i.id = r.incident_id
@@ -124,6 +214,9 @@ def issue_text(row):
     if row["run_id"] is not None:
         body.append("Run: %d" % row["run_id"])
     body.append("Routing row: %d" % row["id"])
+    pkey = problem_key(row)
+    if pkey:
+        body.append(marker(pkey))
     return key, title, "\n".join(body)
 
 
@@ -152,12 +245,20 @@ CREATE TABLE IF NOT EXISTS issues (
     flap_t      REAL,                    -- wall time the last flap comment was queued
     closed_for  REAL                     -- incidents.closed whose close is queued; NULL = open
 );
+CREATE TABLE IF NOT EXISTS problems (
+    pkey     TEXT PRIMARY KEY,           -- board<b>/<device>/<state> or board<b>/CODE/<where>
+    number   INTEGER,                    -- the problem's current issue; NULL while its create is queued
+    closed_t REAL                        -- wall time its close was queued; NULL = open
+);
 """
 
 
 def connect_state(path):
     conn = connect(path)
     conn.executescript(STATE_SCHEMA)
+    cols = [r[1] for r in conn.execute("PRAGMA table_info(issues)").fetchall()]
+    if "pkey" not in cols:  # a C2/C3 state DB
+        conn.execute("ALTER TABLE issues ADD COLUMN pkey TEXT")
     conn.commit()
     return conn
 
@@ -214,10 +315,73 @@ class Mirror:
                               (ticket, incident_id))
             self.conn.execute("UPDATE incidents SET ticket=? WHERE id=? AND ticket IS NULL",
                               (ticket, incident_id))
+            r = self.conn.execute("SELECT ticket FROM incidents WHERE id=?",
+                                  (incident_id,)).fetchone()
+            if r is not None and str(r["ticket"]) == ticket:
+                # The Telegram link, once per incident (UNIQUE(incident_id, transition)).
+                add_alert(self.conn, incident_id, "ticket",
+                          ticket_text(int(number), getattr(self.fj, "repo", DEFAULT_REPO)),
+                          self.wall())
         else:
             self.conn.execute("UPDATE routing SET ticket=? WHERE run_id=? AND incident_id IS NULL "
                               "AND ticket IS NULL", (ticket, run_id))
         self.conn.commit()
+
+    def _problem(self, pkey):
+        return self.state.execute("SELECT * FROM problems WHERE pkey=?", (pkey,)).fetchone()
+
+    def _reuse(self, key, row, pkey):
+        """An open (or lately closed) issue for this problem: comment on it, no new issue."""
+        p = self._problem(pkey)
+        if p is None:
+            return False
+        now = self.wall()
+        if p["closed_t"] is not None and now - p["closed_t"] >= REOPEN_WITHIN_S:
+            return False  # closed an hour or more ago: a new issue
+        inc = self.conn.execute("SELECT opened, duration_s FROM incidents WHERE id=?",
+                                (row["incident_id"],)).fetchone()
+        d = inc["duration_s"] if inc else None
+        text = "happened again at %s, incident %d, duration %s" % (
+            utc(inc["opened"] if inc else now), row["incident_id"],
+            "%s s" % _secs(d) if d is not None else "still open")
+        self.state.execute("INSERT INTO issues (key, incident_id, run_id, number, pkey) "
+                           "VALUES (?, ?, ?, ?, ?)", (key, row["incident_id"], row["run_id"],
+                                                      p["number"], pkey))
+        if p["closed_t"] is not None:
+            self._enqueue(key, "reopen")
+            self.state.execute("UPDATE problems SET closed_t=NULL WHERE pkey=?", (pkey,))
+        self._enqueue(key, "comment", body=text)
+        self.state.commit()
+        if p["number"] is not None:
+            self._store_bench(key, row["incident_id"], row["run_id"], p["number"])
+            self.log("routing %d -> issue #%d (%s happened again)" % (row["id"], p["number"],
+                                                                     pkey))
+        return True
+
+    def _others_open(self, it):
+        """Another incident on this incident's issue is not resolved yet."""
+        if not it["pkey"]:
+            return False
+        for o in self.state.execute("SELECT * FROM issues WHERE pkey=? AND key<>? AND "
+                                    "incident_id IS NOT NULL", (it["pkey"], it["key"])):
+            if it["number"] is not None and o["number"] != it["number"]:
+                continue
+            if it["number"] is None and o["number"] is not None:
+                continue
+            inc = self.conn.execute("SELECT state FROM incidents WHERE id=?",
+                                    (o["incident_id"],)).fetchone()
+            if inc is not None and inc["state"] != "RESOLVED":
+                return True
+        return False
+
+    def _current(self, it):
+        """The problem row whose current issue is this incident's issue, or None."""
+        if not it["pkey"]:
+            return None
+        p = self._problem(it["pkey"])
+        if p is None or p["number"] != it["number"]:
+            return None
+        return p
 
     # -- planning (no network) ---------------------------------------------
     def plan(self):
@@ -238,10 +402,14 @@ class Mirror:
                 r = self.conn.execute("SELECT ticket FROM incidents WHERE id=?",
                                       (row["incident_id"],)).fetchone()
                 existing = r["ticket"] if r else None
+            pkey = problem_key(row)
             if existing and str(existing).isdigit():
-                self.state.execute("INSERT INTO issues (key, incident_id, run_id, number) "
-                                   "VALUES (?, ?, ?, ?)", (key, row["incident_id"], row["run_id"],
-                                                           int(existing)))
+                self.state.execute("INSERT INTO issues (key, incident_id, run_id, number, pkey) "
+                                   "VALUES (?, ?, ?, ?, ?)", (key, row["incident_id"],
+                                                              row["run_id"], int(existing), pkey))
+                if pkey:
+                    self.state.execute("INSERT OR IGNORE INTO problems (pkey, number) "
+                                       "VALUES (?, ?)", (pkey, int(existing)))
                 self.state.commit()
                 self._store_bench(key, row["incident_id"], row["run_id"], int(existing))
                 linked.append((key, "link", int(existing), "linked"))
@@ -251,8 +419,14 @@ class Mirror:
                 self.log("routing %d: no label for route %r; skipped" % (row["id"],
                                                                         clean(row["route"])))
                 continue
-            self.state.execute("INSERT INTO issues (key, incident_id, run_id) VALUES (?, ?, ?)",
-                               (key, row["incident_id"], row["run_id"]))
+            if pkey and self._reuse(key, row, pkey):
+                continue
+            self.state.execute("INSERT INTO issues (key, incident_id, run_id, pkey) "
+                               "VALUES (?, ?, ?, ?)", (key, row["incident_id"], row["run_id"],
+                                                       pkey))
+            if pkey:
+                self.state.execute("INSERT OR REPLACE INTO problems (pkey, number, closed_t) "
+                                   "VALUES (?, NULL, NULL)", (pkey,))
             self._enqueue(key, "create", title, body, self.label_ids[label])
             self.state.commit()
         now = self.wall()
@@ -270,7 +444,12 @@ class Mirror:
         flaps = int(inc["flaps"] or 0)
         resolved = inc["state"] == "RESOLVED"
         if not resolved and closed_for is not None:
-            self._enqueue(key, "reopen")
+            p = self._current(it)
+            if p is None or p["closed_t"] is not None:  # an open shared issue stays as it is
+                self._enqueue(key, "reopen")
+                if p is not None:
+                    self.state.execute("UPDATE problems SET closed_t=NULL WHERE pkey=?",
+                                       (p["pkey"],))
             closed_for = None
         if flaps > flaps_sent and (flap_t is None or now - flap_t >= FLAP_COMMENT_S):
             self._enqueue(key, "comment", body="Flapping: %d flaps (the same board and kind "
@@ -285,7 +464,12 @@ class Mirror:
                     text += " Flaps: %d." % flaps
                     flaps_sent = max(flaps_sent, flaps)
                 self._enqueue(key, "comment", body=text)
-                self._enqueue(key, "close")
+                if not self._others_open(it):  # a shared issue closes with its last incident
+                    self._enqueue(key, "close")
+                    if it["pkey"]:
+                        self.state.execute("UPDATE problems SET closed_t=? WHERE pkey=? AND "
+                                           "(number IS ? OR number IS NULL)",
+                                           (now, it["pkey"], it["number"]))
                 closed_for = inc["closed"]
         if (closed_for, flaps_sent, flap_t) != (it["closed_for"], it["flaps_sent"], it["flap_t"]):
             self.state.execute("UPDATE issues SET closed_for=?, flaps_sent=?, flap_t=? WHERE key=?",
@@ -293,13 +477,16 @@ class Mirror:
         self.state.commit()
 
     # -- replay (network) ----------------------------------------------------
-    def find_existing(self, key, title):
-        """Exact title match via the lagging, fuzzy search, retried up to search_wait."""
+    def find_existing(self, key, title, pkey=None):
+        """Exact title (and lw-key marker line) via the lagging, fuzzy search, retried."""
         deadline = self.clock() + self.search_wait
         while True:
             for issue in self.fj.search(q=key):
-                if isinstance(issue, dict) and issue.get("title") == title:
-                    return int(issue["number"])
+                if not isinstance(issue, dict) or issue.get("title") != title:
+                    continue
+                if pkey and marker(pkey) not in str(issue.get("body") or "").splitlines():
+                    continue
+                return int(issue["number"])
             if self.clock() + self.search_step > deadline:
                 return None
             self.sleep(self.search_step)
@@ -329,7 +516,7 @@ class Mirror:
             if r and r["ticket"] and str(r["ticket"]).isdigit():
                 number, how = int(r["ticket"]), "found"
         if number is None and op["sent"] is not None:  # sent before; reply never stored
-            number = self.find_existing(op["key"], op["title"])
+            number = self.find_existing(op["key"], op["title"], it["pkey"])
             how = "found"
         if number is None:
             how = "created"
@@ -337,6 +524,13 @@ class Mirror:
                                                                  [op["label_id"]]))
         self._store_bench(op["key"], it["incident_id"], it["run_id"], number)
         self.state.execute("UPDATE issues SET number=? WHERE key=?", (number, op["key"]))
+        if it["pkey"]:
+            self.state.execute("UPDATE problems SET number=? WHERE pkey=? AND number IS NULL",
+                               (number, it["pkey"]))
+            for o in self.state.execute("SELECT * FROM issues WHERE pkey=? AND number IS NULL",
+                                        (it["pkey"],)).fetchall():
+                self._store_bench(o["key"], o["incident_id"], o["run_id"], number)
+                self.state.execute("UPDATE issues SET number=? WHERE key=?", (number, o["key"]))
         self._mark(op, done=self.wall(), how=how, last_error=None)
         return number, how
 

@@ -36,6 +36,10 @@ class Clocked(Base):
                        base="http://127.0.0.1:%d" % _free_port(), timeout=1)
 
     def pull(self):
+        # One board per pull: these are per-incident tests; the same problem on one
+        # board shares an issue (C4, tests/test_c_reuse.py).
+        self.w.board = "nucleo-%d" % (self.bench.execute("SELECT COUNT(*) FROM incidents")
+                                      .fetchone()[0] + 1)
         return self.w.open_incident(self.now, "HEALTH_FAIL", "HARDWARE",
                                     "loopback=OPEN on 2 lines in a row.", {"lines": []})
 
@@ -56,6 +60,10 @@ class CrashTest(Base):
     def setUp(self):
         super().setUp()
         make_db.build(self.db)
+        conn = stub_connect(self.db)  # the flap on a second board: three problems (C4)
+        conn.execute("UPDATE incidents SET board='nucleo-2' WHERE id=2")
+        conn.commit()
+        conn.close()
         self.do_setup()
 
     def test_killed_right_after_create_then_restart_one_issue(self):
