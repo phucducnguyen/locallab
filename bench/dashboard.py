@@ -13,6 +13,7 @@ import argparse
 import http.server
 import json
 import os
+import re
 import socketserver
 import sqlite3
 import sys
@@ -22,7 +23,8 @@ import time
 from bench.status_data import (VDD_MIN_MV, Db, clean, loads, parse_health)
 
 PAGE_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "dashboard_page.html")
-FOOTER = "All inference on this GB10 (Qwen3.6-35B-A3B on vLLM) - no internet"
+FOOTER = "Everything runs on this NVIDIA GB10 \u2014 no internet. Model: Qwen3.6-35B-A3B."
+STALE_S = 5.0
 
 # name -> (header pins, MCU pins, input pin on CN8 or None)
 DEVICES = {
@@ -90,6 +92,71 @@ def _sent(alerts, transition):
     return None
 
 
+WIRE_WORDS = {"loopback": "test wire", "sensor": "sensor wire", "radio": "radio wire"}
+TEAM = {"HARDWARE": "hardware", "CODE": "software", "ESTOP": "none needed",
+        "UNKNOWN": "still checking"}
+OK_HEAD = "\u2705 Everything is working"
+WAIT_HEAD = "Waiting for the board\u2026"
+
+
+def board_name(board):
+    """'nucleo-1' -> 'Board 1'; anything without a trailing number -> 'The board'."""
+    m = re.search(r"(\d+)$", board or "")
+    return "Board %s" % int(m.group(1)) if m else "The board"
+
+
+def incident_headline(inc, dev, state, board):
+    """(level, text) in the plain words of the Telegram messages, for an open incident."""
+    name, kind, tri = board_name(board), inc.get("kind"), inc.get("triage")
+    if dev == "estop" or kind == "ESTOP" or tri == "ESTOP":
+        return "stop", "\u26d4 %s: someone pressed the stop button. Not a fault." % name
+    if dev in LINKS:
+        wire = WIRE_WORDS[dev]
+        if state == "STUCK":
+            return "bad", "\U0001f534 %s: the %s is stuck." % (name, wire)
+        if state == "OPEN":
+            return "bad", "\U0001f534 %s: the %s came loose." % (name, wire)
+        return "bad", "\U0001f534 %s: the %s has a problem." % (name, wire)
+    if dev == "power":
+        return "bad", "\U0001f534 %s: the power is too low." % name
+    if kind == "HARDFAULT" or tri == "CODE":
+        return "bad", "\U0001f534 %s: the new code made it crash." % name
+    if kind in ("SILENT", "LINK_DOWN"):
+        if tri in (None, "UNKNOWN"):
+            return "warn", ("\U0001f7e1 %s stopped talking after the update. Checking if it "
+                            "is the board or the code." % name)
+        return "bad", "\U0001f534 %s stopped talking." % name
+    if kind == "REBOOT":
+        return "bad", "\U0001f534 %s restarted by itself." % name
+    if kind == "RUN_FAIL":
+        return "bad", "\U0001f534 %s: the test run failed." % name
+    return "bad", "\U0001f534 %s: something went wrong." % name
+
+
+def headline_sub(inc, alert_s, dev=None):
+    team = "ESTOP" if dev == "estop" or inc.get("kind") == "ESTOP" else inc.get("triage")
+    bits = ["Team: %s" % TEAM.get(team, "still checking")]
+    if alert_s is not None:
+        bits.append("alert sent in %.1f s" % alert_s)
+    bits.append("incident #%s" % inc["id"])
+    return " \u00b7 ".join(bits)
+
+
+def first_sentence(text):
+    """The first plain sentence of an explain alert's text (skips the LOCAL LAB head)."""
+    if not isinstance(text, str):
+        return None
+    for line in text.splitlines():
+        line = line.strip()
+        if not line or line.startswith("LOCAL LAB") or line.startswith("Incident:") \
+                or line == "...":
+            continue
+        line = re.sub(r"^(EXPLANATION|SUMMARY|DIAGNOSIS)\s*:\s*", "", line, flags=re.I)
+        m = re.match(r"(.+?[.!?])(\s|$)", line)
+        return clean(m.group(1) if m else line, 200)
+    return None
+
+
 def _since(t, t0):
     return round(t - t0, 1) if t is not None and t0 is not None else None
 
@@ -108,7 +175,8 @@ class Dashboard:
                 self.db.close()
                 return {"error": "DB: %s" % clean(str(e), 200), "now": time.time(),
                         "devices": {}, "banner": {"level": "unknown", "text": "NO DATA"},
-                        "footer": FOOTER}
+                        "headline": {"level": "unknown", "text": WAIT_HEAD, "sub": ""},
+                        "stale": True, "footer": FOOTER}
 
     def _health(self):
         if self.board:
@@ -123,7 +191,8 @@ class Dashboard:
         snap = self.db.read()
         st = {"error": snap["error"], "now": time.time(), "footer": FOOTER}
         if snap["error"]:
-            st.update(devices={}, banner={"level": "unknown", "text": "NO DATA"})
+            st.update(devices={}, banner={"level": "unknown", "text": "NO DATA"},
+                      headline={"level": "unknown", "text": WAIT_HEAD, "sub": ""}, stale=True)
             return st
         ev = self._health()
         board = self.board or (ev and ev["board"]) or (snap["boards"][0] if snap["boards"]
@@ -137,6 +206,7 @@ class Dashboard:
         st["vdd"] = round(vdd / 1000.0, 3) if vdd is not None else None
         st["vdd_low"] = vdd is not None and vdd < VDD_MIN_MV
         st["temp"] = h.get("temp")
+        st["stale"] = ev is None or ev["t_wall"] is None or st["now"] - ev["t_wall"] > STALE_S
 
         devices = {}
         for name in ORDER:
@@ -151,7 +221,7 @@ class Dashboard:
 
         open_incs = [i for i in snap["open"] if board is None or i["board"] == board]
         tickets = self._tickets([i["id"] for i in open_incs])
-        heads = []
+        heads, lines = [], []
         for inc in open_incs:  # newest first
             alerts = snap["alerts"].get(inc["id"], [])
             t0 = _t0(inc)
@@ -166,11 +236,21 @@ class Dashboard:
                 if devices[dev]["state"] in ("OK", "OFF", "UNKNOWN"):
                     devices[dev]["state_note"] = "incident open"
             heads.append(self._head(inc, dev, devices, snap["causes"].get(inc["id"])))
+            dstate = devices[dev]["state"] if dev else None
+            f = loads(inc.get("evidence")).get("fields")
+            if dev in LINKS and isinstance(f, dict) and f.get(dev) in ("OPEN", "STUCK"):
+                dstate = f[dev]
+            lines.append((incident_headline(inc, dev, dstate, board),
+                          headline_sub(inc, info["alert_s"], dev)))
         st["devices"] = devices
         if heads:
             st["banner"] = {"level": "bad", "text": heads[0]["text"],
                             "causes": heads[0]["causes"], "incident": open_incs[0]["id"],
                             "more": len(heads) - 1}
+            (lvl, txt), sub = lines[0]
+            if len(lines) > 1:
+                sub += " \u00b7 %d more open" % (len(lines) - 1)
+            st["headline"] = {"level": lvl, "text": txt, "sub": sub}
         else:
             bad = [n for n in ORDER if devices[n]["state"] in ("OPEN", "STUCK", "ON", "LOW")]
             if bad:
@@ -178,6 +258,7 @@ class Dashboard:
                     "%s %s" % (n, devices[n]["state"]) for n in bad), "causes": []}
             else:
                 st["banner"] = {"level": "ok", "text": "ALL CLEAR", "causes": []}
+            st["headline"] = self._quiet_headline(bad, devices, board, st["stale"])
 
         ls = snap["last_sent"]
         st["telegram"] = ({"text": clean(ls["text"].replace("\n", " | "), 600),
@@ -192,10 +273,39 @@ class Dashboard:
                 "raw_t0": time.strftime("%H:%M:%S", time.gmtime(t0)) if t0 else None,
                 "alert_s": _since(newest.get("t_alert_sent") or _sent(alerts, "open"), t0),
                 "explain_s": _since(_sent(alerts, "explain"), t0),
-                "fix_s": _since(_sent(alerts, "fix"), t0)}
+                "fix_s": _since(_sent(alerts, "fix"), t0),
+                "ticket": None, "explain": None}
+            tk = newest.get("ticket") or self._tickets([newest["id"]]).get(newest["id"])
+            st["stopwatch"]["ticket"] = clean(str(tk), 40).lstrip("#") if tk else None
+            ex = None
+            for a in alerts:
+                if a.get("transition") == "explain":
+                    ex = first_sentence(a.get("text"))
+            if not ex:
+                e = loads(newest.get("evidence")).get("explanation")
+                ex = first_sentence(e) if isinstance(e, str) else None
+            st["stopwatch"]["explain"] = ex
         else:
             st["stopwatch"] = None
         return st
+
+    def _quiet_headline(self, bad, devices, board, stale):
+        if stale:
+            return {"level": "unknown", "text": WAIT_HEAD,
+                    "sub": "No news from the board for more than %d s" % STALE_S}
+        name = board_name(board)
+        if bad:
+            n = bad[0]
+            s = devices[n]["state"]
+            if n in LINKS:
+                what = "the %s looks %s" % (WIRE_WORDS[n], "stuck" if s == "STUCK" else "loose")
+            elif n == "estop":
+                what = "the stop button is pressed"
+            else:
+                what = "the power looks low"
+            return {"level": "warn", "text": "\U0001f7e1 %s: %s. Checking\u2026" % (name, what),
+                    "sub": "No alert yet \u00b7 watching it"}
+        return {"level": "ok", "text": OK_HEAD, "sub": "%s \u00b7 all parts checked" % name}
 
     def _tickets(self, ids):
         if not ids:

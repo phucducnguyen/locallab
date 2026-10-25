@@ -187,7 +187,8 @@ class ServerTest(Base):
         self.assertNotRegex(html, r"(?i)<(script|link|img|iframe)[^>]+(src|href)=")
         self.assertNotIn("@import", html)
         for word in ("<svg", "CN8", "A0", "A5", "B1", "estop", "state.json",
-                     "Qwen3.6-35B-A3B on vLLM", "fetch("):
+                     "Qwen3.6-35B-A3B", "test wire", "sensor wire", "radio wire",
+                     "stop button", "Waiting for the board", "fetch("):
             self.assertIn(word, html)
         code, ctype, body = self.get(base + "/state.json")
         self.assertEqual(code, 200)
