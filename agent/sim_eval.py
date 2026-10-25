@@ -607,6 +607,25 @@ def oracle_reply(case):
     return "\n".join(s for s in out if s.strip())
 
 
+KV_RE = re.compile(r"\b([a-z][a-z0-9_]*)=([A-Za-z0-9_.,+-]*[A-Za-z0-9])")
+HEX_RE = re.compile(r"\b0x[0-9a-fA-F]{4,8}\b")
+
+
+def invented_values(case, text):
+    """key=value pairs and hex values in the reply that no record or diff line holds."""
+    blob = json.dumps([case["record"], case["show"]])
+    bad = []
+    for m in KV_RE.finditer(text):
+        k, v = m.groups()
+        forms = (m.group(0), "%s %s" % (k, v), '"%s": %s' % (k, v), '"%s": "%s"' % (k, v))
+        if not any(f in blob for f in forms):
+            bad.append(m.group(0))
+    for m in HEX_RE.finditer(text):
+        if m.group(0).lower() not in blob.lower():
+            bad.append(m.group(0))
+    return bad
+
+
 def score(case, text):
     """Every per-trial number the summary needs."""
     exp = case["expect"]
@@ -643,6 +662,7 @@ def score(case, text):
          "cite_clean": not bad_uncited and not rep["unresolved"],
          "cite_strict": rep["ok"],
          "cant_tell": bool(CANT_TELL_RE.search(text)),
+         "invented": invented_values(case, text)[:8],
          "unresolved_list": rep["unresolved"][:8],
          "uncited_list": [u["sentence"][:160] for u in bad_uncited[:8]]}
     s["failures"] = failure_categories(s, d, exp)
@@ -665,6 +685,10 @@ def failure_categories(s, d, exp):
         out.append("uncited_sentence")
     if s["unresolved"]:
         out.append("unresolved_citation")
+    if s["invented"]:
+        out.append("invented_value")
+    if d and not exp["commit"] and d["commit"] != "none":
+        out.append("commit_named_for_%s" % exp["triage"])
     return out
 
 
@@ -774,6 +798,7 @@ def summarize(trials):
                 "cite_clean": pct(sum(t["cite_clean"] for t in ok), n),
                 "cite_strict": pct(sum(t["cite_strict"] for t in ok), n),
                 "cant_tell": pct(sum(t["cant_tell"] for t in ok), n),
+                "values_exact": pct(sum(not t.get("invented") for t in ok), n),
                 "unresolved_per_trial": round(sum(t["unresolved"] for t in ok) / n, 2) if n else None,
                 "p50_s": quantile(lat, 0.5), "p95_s": quantile(lat, 0.95),
                 "tok_s_p50": quantile(tps, 0.5)}
@@ -790,7 +815,7 @@ def summarize(trials):
 
 
 COLS = ("n", "errors", "label_acc", "format_rate", "verdict_acc", "commit_acc", "cite_clean",
-        "cite_strict", "cant_tell", "p50_s", "p95_s", "tok_s_p50")
+        "cite_strict", "values_exact", "cant_tell", "p50_s", "p95_s", "tok_s_p50")
 
 
 def table(summary):
