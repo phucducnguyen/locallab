@@ -1,0 +1,74 @@
+{
+  "_about": "Written by hand from reading each recording against the README 'Serial output' protocol. first = the first LW records in compact form (BOOT fw resets / TEST name status / RESULT status / HARDFAULT <number of reg fields> / ALIVE n / HEALTH n loopback). counts per kind, non-LW text lines and unreadable bytes were counted with grep/tr on the raw files, not with bench/parser.py.",
+  "main.raw": {
+    "first": ["BOOT 5e34f8b PIN", "TEST crc32 PASS", "TEST ringbuf PASS", "TEST systick PASS",
+              "TEST cmd_dispatch PASS", "TEST loopback PASS", "RESULT PASS", "ALIVE 1", "HEALTH 1 OK"],
+    "counts": {"BOOT": 1, "TEST": 5, "RESULT": 1, "ALIVE": 6, "HEALTH": 6},
+    "nonlw_lines": 1, "bad_bytes": 0
+  },
+  "crc.raw": {
+    "first": ["BOOT 255465e PIN", "TEST crc32 FAIL", "TEST ringbuf PASS", "TEST systick PASS",
+              "TEST cmd_dispatch PASS", "TEST loopback PASS", "RESULT FAIL", "ALIVE 1", "HEALTH 1 OK"],
+    "counts": {"BOOT": 1, "TEST": 5, "RESULT": 1, "ALIVE": 7, "HEALTH": 7},
+    "nonlw_lines": 1, "bad_bytes": 0
+  },
+  "hardfault.raw": {
+    "first": ["BOOT e82e909 PIN", "TEST crc32 PASS", "TEST ringbuf PASS", "TEST systick PASS",
+              "HARDFAULT 8", "HARDFAULT 8"],
+    "counts": {"BOOT": 1, "TEST": 3, "HARDFAULT": 6},
+    "nonlw_lines": 1, "bad_bytes": 0
+  },
+  "watchdog.raw": {
+    "first": ["BOOT f43c5f8 PIN", "BOOT f43c5f8 IWDG,PIN", "BOOT f43c5f8 IWDG,PIN"],
+    "counts": {"BOOT": 10},
+    "nonlw_lines": 10, "bad_bytes": 0
+  },
+  "baud.raw": {
+    "first": [],
+    "counts": {},
+    "nonlw_lines": 1, "bad_bytes": 48
+  },
+  "case01.raw": {
+    "first": ["BOOT 38d2201 PIN", "HARDFAULT 8", "HARDFAULT 8"],
+    "counts": {"BOOT": 1, "HARDFAULT": 8},
+    "nonlw_lines": 1, "bad_bytes": 0
+  },
+  "case02.raw": {
+    "first": ["BOOT fa9324f PIN", "TEST crc32 PASS", "TEST ringbuf PASS", "TEST systick PASS",
+              "HARDFAULT 8", "HARDFAULT 8"],
+    "counts": {"BOOT": 1, "TEST": 3, "HARDFAULT": 7},
+    "nonlw_lines": 1, "bad_bytes": 0
+  },
+  "case03.raw": {
+    "first": ["BOOT 1f4388a PIN", "TEST crc32 PASS", "HARDFAULT 8", "HARDFAULT 8"],
+    "counts": {"BOOT": 1, "TEST": 1, "HARDFAULT": 7},
+    "nonlw_lines": 1, "bad_bytes": 0
+  },
+  "case04.raw": {
+    "first": ["BOOT 8f82429 PIN", "TEST crc32 PASS", "HARDFAULT 0", "HARDFAULT 0", "HARDFAULT 0"],
+    "counts": {"BOOT": 9, "TEST": 9, "HARDFAULT": 1912},
+    "nonlw_lines": 9, "bad_bytes": 0
+  },
+  "case05.raw": {
+    "first": ["BOOT b20c73c PIN", "TEST crc32 PASS", "TEST ringbuf FAIL", "TEST systick PASS",
+              "TEST cmd_dispatch PASS", "TEST loopback PASS", "RESULT FAIL", "ALIVE 1", "HEALTH 1 OK"],
+    "counts": {"BOOT": 1, "TEST": 5, "RESULT": 1, "ALIVE": 6, "HEALTH": 6},
+    "nonlw_lines": 1, "bad_bytes": 0
+  },
+  "case06.raw": {
+    "first": ["BOOT 6db4658 PIN", "BOOT 6db4658 IWDG,PIN", "BOOT 6db4658 IWDG,PIN"],
+    "counts": {"BOOT": 8},
+    "nonlw_lines": 8, "bad_bytes": 0
+  },
+  "case07.raw": {
+    "first": [],
+    "counts": {},
+    "nonlw_lines": 0, "bad_bytes": 0
+  },
+  "case08.raw": {
+    "first": ["BOOT 5ddf2dc PIN", "TEST crc32 PASS", "TEST ringbuf PASS", "TEST systick PASS",
+              "TEST cmd_dispatch PASS", "TEST loopback PASS", "RESULT PASS", "ALIVE 1", "HEALTH 1 OK"],
+    "counts": {"BOOT": 1, "TEST": 5, "RESULT": 1, "ALIVE": 7, "HEALTH": 7},
+    "nonlw_lines": 1, "bad_bytes": 0
+  }
+}
