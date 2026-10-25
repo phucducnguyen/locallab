@@ -573,7 +573,7 @@ class Dashboard:
                 del self._tok[k]
         diag = find_diagnosis(full, alert_text)
         ai["rule"] = rule_vs_ai(inc.get("triage"), inc.get("route"), diag, bool(exp))
-        if unavailable:
+        if unavailable or ai["phase"] == "late":
             ai["rule"]["status"] = "none"
         cites = parse_citations(full) or parse_citations(alert_text)
         for c in cites:
