@@ -64,6 +64,7 @@ class HeadlineTest(Base):
         self.assertEqual(h["text"],
                          "⛔ Board 1: someone pressed the stop button. Not a fault.")
         self.assertEqual(h["level"], "stop")
+        self.assertTrue(h["sub"].startswith("Team: none needed"))
 
     def test_silent_unknown(self):
         conn = self.empty()

@@ -59,6 +59,7 @@ footer { padding: 10px 48px; font-size: 24px; color: var(--dim); display: flex;
 #clock { font-variant-numeric: tabular-nums; }
 svg text { font-family: inherit; }
 @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: .35; } }
+body.stale main { opacity: .4; }
 .broken { animation: pulse 2s ease-in-out infinite; }
 </style>
 </head>
@@ -169,6 +170,7 @@ WIRES.forEach(function (w) {
                         fill: "#8c99a6"}, g);
   sub.textContent = w[4];
   wireEls[w[0]] = {g: g, path: path, gap: gap, gnd: gnd, label: label};
+  setWire(w[0], "UNKNOWN", false);
 });
 
 function cls(state) {
@@ -209,6 +211,7 @@ function setRow(n, c, word, tech) {
   var b = document.createElement("b"); b.textContent = word; e.w.appendChild(b);
   e.t.textContent = tech || "";
 }
+ROWS.forEach(function (n) { setRow(n, "unknown", "unknown", ""); });
 var LINK_WORD = {OK: "OK", OPEN: "loose", STUCK: "stuck"};
 
 function fmtClock(t) {
@@ -254,6 +257,7 @@ function waiting(sub) {
   setText("htext", "Waiting for the board…");
   setText("hsub", sub || "");
   document.getElementById("stale").className = "";
+  document.body.className = "stale";
 }
 
 function render(st) {
@@ -265,6 +269,7 @@ function render(st) {
   document.getElementById("stale").className =
     st.stale && h.level !== "unknown" ? "on" : "";
 
+  document.body.className = st.stale ? "stale" : "";
   var dev = st.devices || {};
   WIRES.forEach(function (w) {
     var d = dev[w[0]] || {};

@@ -133,8 +133,9 @@ def incident_headline(inc, dev, state, board):
     return "bad", "\U0001f534 %s: something went wrong." % name
 
 
-def headline_sub(inc, alert_s):
-    bits = ["Team: %s" % TEAM.get(inc.get("triage"), "still checking")]
+def headline_sub(inc, alert_s, dev=None):
+    team = "ESTOP" if dev == "estop" or inc.get("kind") == "ESTOP" else inc.get("triage")
+    bits = ["Team: %s" % TEAM.get(team, "still checking")]
     if alert_s is not None:
         bits.append("alert sent in %.1f s" % alert_s)
     bits.append("incident #%s" % inc["id"])
@@ -240,7 +241,7 @@ class Dashboard:
             if dev in LINKS and isinstance(f, dict) and f.get(dev) in ("OPEN", "STUCK"):
                 dstate = f[dev]
             lines.append((incident_headline(inc, dev, dstate, board),
-                          headline_sub(inc, info["alert_s"])))
+                          headline_sub(inc, info["alert_s"], dev)))
         st["devices"] = devices
         if heads:
             st["banner"] = {"level": "bad", "text": heads[0]["text"],
