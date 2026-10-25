@@ -52,6 +52,8 @@ DEFAULT_ENDPOINT = "http://172.18.0.1:8765"
 DEFAULT_DB = "~/.local/state/labwatch/bench.db"
 POLL_TIMEOUT_S = 25
 ASK_TIMEOUT_S = 60.0
+REPLY_TRIES = 5
+REPLY_RETRY_S = 2.0
 ASK_QUEUE = 3
 QUESTION_MAX = 300
 ANSWER_LINES = 8
@@ -272,10 +274,16 @@ class Bot:
         if self.dry_run:
             self.log("would reply to %s:\n%s" % (message_id, text))
             return
-        try:
-            self.tg.send_message(text, message_id)
-        except SendError as e:
-            self.log("commands: reply to %s not sent: %s" % (message_id, e.what))
+        # The relay to Telegram rides a phone tether and drops for seconds at a time.
+        for attempt in range(REPLY_TRIES):
+            try:
+                self.tg.send_message(text, message_id)
+                return
+            except SendError as e:
+                self.log("commands: reply to %s not sent (try %d): %s"
+                         % (message_id, attempt + 1, e.what))
+                if attempt + 1 < REPLY_TRIES:
+                    time.sleep(REPLY_RETRY_S * (attempt + 1))
 
     # --- one update ---
     def chat_id(self):
@@ -391,6 +399,10 @@ class Bot:
 
     # --- /ask ---
     def cmd_ask(self, mid, arg):
+        m = re.fullmatch(r"\s*#?(\d{1,6})\s*", arg or "")
+        if m:  # "/ask 5" means incident 5, as the alerts say
+            arg = ("What happened in incident %s, is it the hardware or the code, and what "
+                   "should we do next? Answer in at most 4 short plain sentences." % m.group(1))
         question = printable(arg, QUESTION_MAX)
         if not question:
             self.reply(mid, "usage: /ask <question>")
