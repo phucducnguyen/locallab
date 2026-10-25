@@ -1,0 +1,11 @@
+{
+  "agent_cmd": ["/usr/bin/env",
+                "PATH=/home/dell/.local/bin:/usr/local/bin:/usr/bin:/bin",
+                "NEMOCLAW_GATEWAY_PORT=8090",
+                "/home/dell/.local/bin/nemoclaw", "labwatch", "agent",
+                "--agent", "main", "--session-id", "{session}", "--timeout", "50",
+                "-m", "{message}"],
+  "timeout_s": 55,
+  "session_prefix": "lw-",
+  "prompt": "Use the labwatch skill. Explain Lab Watch {kind} {id}: fetch that record with the skill's client and follow the skill's rules. End with the DIAGNOSIS line."
+}

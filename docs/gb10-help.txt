@@ -1,0 +1,537 @@
+=== nemoclaw --version
+nemoclaw v0.0.137-1-g95d0ed2472
+=== nemoclaw --help
+
+  NemoClaw  v0.0.137-1-g95d0ed2472
+  Deploy more secure, always-on AI assistants with a single command.
+  Global commands run without a sandbox-name prefix; sandbox commands start with a sandbox name.
+  Use `nemoclaw status` for the global overview, and `nemoclaw <name> status` for one sandbox.
+
+  Getting Started:
+    nemoclaw onboard                      Configure inference endpoint and credentials (--agent to choose runtime)
+    nemoclaw onboard --from               Use a custom Dockerfile for the sandbox image
+    nemoclaw agents list                  List available agent runtimes for onboard --agent
+    nemoclaw profiles list                List installed serving profiles and evaluate host compatibility [--json]
+    nemoclaw completion                   Generate shell completion script [bash|zsh|fish]
+
+  Sandbox Management:
+    nemoclaw list                         List all sandboxes [--json]
+    nemoclaw use <name>                   Set the default sandbox [--json]
+    nemoclaw launch <name>                Connect to a sandbox and start its agent
+    nemoclaw <name> connect               Shell into a running sandbox [--probe-only]
+    nemoclaw <name> dashboard-url         Print the dashboard URL (not supported for the experimental Hermes portable profile) [--quiet|-q]
+    nemoclaw <name> recover               Repair a stopped sandbox gateway and host forwards
+    nemoclaw <name> stop                  Stop the sandbox container, preserving workspace state
+    nemoclaw <name> start                 Restart a stopped sandbox container
+    nemoclaw <name> status                Show one sandbox's health and runtime status
+    nemoclaw <name> exec                  Run a command non-interactively in a running sandbox [--workdir <dir>] [--tty|--no-tty] [--timeout <s>] -- <cmd> [args...]
+    nemoclaw <name> agent                 Run one agent turn non-interactively in a sandbox [openclaw-agent-flags...]
+    nemoclaw <name> download              Download a file or directory from the sandbox to the host <sandbox-path> [host-dest]
+    nemoclaw <name> upload                Upload a file or directory from the host into the sandbox <host-path> [sandbox-dest]
+    nemoclaw <name> doctor                Diagnose sandbox and gateway health [--json] [--fix]
+    nemoclaw <name> logs                  Stream sandbox logs [--follow] [--tail <lines>|-n <lines>] [--since <duration>]
+    nemoclaw <name> share mount           Mount sandbox filesystem on the host [sandbox-path] [local-mount-point]
+    nemoclaw <name> share unmount         Unmount a shared sandbox filesystem [local-mount-point]
+    nemoclaw config export <sandbox>      Export a sandbox to a NemoClaw configuration file --output <path|-> [--name <name>] [--force] [--json]
+    nemoclaw <name> share status          Show sandbox share mount status [local-mount-point]
+    nemoclaw <name> rebuild               Upgrade sandbox to current agent version [--yes|-y|--force] [--verbose|-v] [--observability|--no-observability]
+    nemoclaw <name> gateway-token         Print the sandbox agent's auth token to stdout [--quiet|-q]
+    nemoclaw <name> gateway restart       Restart the sandbox agent gateway [--quiet|-q]
+    nemoclaw <name> destroy               Stop NIM and delete sandbox [--yes|-y|--force] [--cleanup-gateway|--no-cleanup-gateway] [--keep-vllm]
+    nemoclaw <name> agents list           List OpenClaw agents configured in a sandbox [openclaw-agents-list-flags...]
+    nemoclaw <name> agents add            Add an OpenClaw agent inside a sandbox [openclaw-agents-add-flags...]
+    nemoclaw <name> agents delete         Delete an OpenClaw agent inside a sandbox <agent-id> [openclaw-agents-delete-flags...]
+    nemoclaw <name> agents apply          Reconcile a sandbox's OpenClaw agents against a declarative manifest -f <agents.yaml> [--yes] [--non-interactive]
+    nemoclaw <name> sessions              List conversation sessions in a sandbox [sessions-flags...]
+    nemoclaw <name> sessions list         List conversation sessions in a sandbox [sessions-list-flags...]
+    nemoclaw <name> sessions reset        Reset an OpenClaw conversation session via the gateway <key> [--agent <id>] [--reason new|reset] [--json] [--verbose]
+    nemoclaw <name> sessions delete       Delete a conversation session from the sandbox <key> [--agent <id>] [--keep-transcript] [--json] [--verbose]
+    nemoclaw <name> sessions export       Export agent session JSONL out of a running sandbox [keys...] [--agent <id>] [--format <dir|tar>] [--out <path>] [--include-trajectory] [--json]
+
+  Skills:
+    nemoclaw <name> skill install         Deploy a skill directory to the sandbox <path>
+    nemoclaw <name> skill remove          Remove a named skill through the selected agent integration <skill>
+    nemoclaw <name> skill list            List skills from the agent's native state
+
+  Policy Presets:
+    nemoclaw <name> policy get            Export the sandbox base policy with literal credentials redacted [--raw]
+    nemoclaw <name> policy add            Add a network or filesystem policy preset (--yes, -y, --dry-run, --from-file <path>, --from-dir <path>, --trusted-private-host <host>)
+    nemoclaw <name> policy remove         Remove an applied policy preset (--yes, -y, --dry-run)
+    nemoclaw <name> policy list           List policy presets
+    nemoclaw <name> hosts-add             Add a sandbox /etc/hosts alias <hostname> <ip> [--dry-run]
+    nemoclaw <name> hosts-list            List sandbox host aliases
+    nemoclaw <name> hosts-remove          Remove a sandbox /etc/hosts alias (--dry-run)
+    nemoclaw <name> policy explain        Explain the active policy context for the sandbox (--json, --write)
+    nemoclaw <name> policy exclude <key>  Exclude an entry from the agent baseline policy (--force, --yes, -y, --dry-run)
+    nemoclaw <name> policy restore <key>  Restore a previously excluded baseline entry (--force, --yes, -y, --dry-run)
+
+  Messaging Channels:
+    nemoclaw <name> channels list         List supported messaging channels
+    nemoclaw <name> channels add <channel> Save messaging channel credentials and rebuild [--dry-run]
+    nemoclaw <name> channels remove <channel> Clear messaging channel credentials and rebuild [--dry-run]
+    nemoclaw <name> channels stop <channel> Disable channel without wiping credentials [--dry-run]
+    nemoclaw <name> channels start <channel> Re-enable a stopped messaging channel [--dry-run]
+    nemoclaw <name> channels status       Inspect messaging channel status [--channel <channel>] [--wait] [--timeout <seconds>] [--json]
+
+  MCP Servers:
+    nemoclaw <name> mcp list              List configured MCP servers [--json]
+    nemoclaw <name> mcp add               Add an OpenShell-enforced MCP HTTP server <server> --url <url> --env KEY [--deny-tool TOOL ...]
+    nemoclaw <name> mcp update            Replace or clear MCP denied-tool rules <server> (--deny-tool TOOL [...] | --clear-deny-tools)
+    nemoclaw <name> mcp status            Inspect MCP server health and advertised tools [server] [--json] [--probe|--no-probe] [--tools]
+    nemoclaw <name> mcp restart           Refresh one or all MCP server registrations [server]
+    nemoclaw <name> mcp remove            Remove an agent registration and detach its provider <server> [--force]
+    nemoclaw <name> mcp migrate           Preview or apply legacy-to-native MCP migration [--apply] [--json]
+
+  Compatibility Commands:
+    nemoclaw setup                        Deprecated alias for onboard
+    nemoclaw setup-spark                  Deprecated alias for onboard
+
+  Services:
+    nemoclaw tunnel start                 Start the cloudflared public-URL tunnel
+    nemoclaw tunnel stop                  Stop the cloudflared public-URL tunnel
+    nemoclaw tunnel status                Show cloudflared public-URL tunnel status
+    nemoclaw start                        Deprecated command that prints start migration guidance
+    nemoclaw stop                         Deprecated full stop (also releases the managed gateway port)
+    nemoclaw inference get                Show the selected NemoClaw inference path [--json]
+    nemoclaw status                       Show global sandbox and host service status [--json]
+    nemoclaw inference set                Switch the NemoClaw inference model --provider <provider> --model <model> [--sandbox <name>] [--no-verify]
+
+  Troubleshooting:
+    nemoclaw doctor                       Diagnose host and gateway health [--json|--text]
+    nemoclaw debug                        Collect diagnostics for bug reports [--quick] [--output FILE|-o FILE] [--sandbox NAME]
+    nemoclaw host probe                   Report host and gateway readiness without changing the system [--json]
+
+  Credentials:
+    nemoclaw credentials add              Register a provider credential <PROVIDER> --type <TYPE> [--credential ENV_NAME] [--config K=V] [--from-existing]
+    nemoclaw credentials list             List stored credential providers
+    nemoclaw credentials reset            Remove a provider credential <PROVIDER> [--yes|-y]
+
+  Backup:
+    nemoclaw backup-all                   Back up all sandbox state before upgrade
+
+  Upgrade:
+    nemoclaw update                       Run the maintained NemoClaw installer update flow (--check, --fresh, --allow-downgrade, --yes|-y)
+    nemoclaw upgrade-sandboxes            Detect and rebuild stale sandboxes (--check, --auto, --yes|-y)
+
+  Resources:
+    nemoclaw resources                    Show hardware inventory (CPU cores, RAM, GPU VRAM) [--json]
+
+  Cleanup:
+    nemoclaw gc                           Remove orphaned sandbox Docker images (--yes|-y|--force, --dry-run)
+    nemoclaw uninstall                    Run uninstall.sh
+
+  Uninstall flags:
+    --yes                             Skip the confirmation prompt
+    --keep-openshell                  Leave the OpenShell binary installed
+    --delete-models                   Remove all Ollama models and non-credential Hugging Face cache data (authentication files remain)
+    --destroy-user-data               Skip eligible fresh backups; remove preserved user data; remove managed CLI shims only when no sibling gateway is confirmed
+    --all-gateway-ports               Uninstall every gateway port on this host, not only NEMOCLAW_GATEWAY_PORT
+
+  Reconfiguration (after onboard):
+    • Check inference route:   nemoclaw inference get
+    • Change inference model:  nemoclaw inference set --model <model> --provider <provider>
+    • Add network presets:     use the policy add command on your sandbox
+    • Change credentials:      credentials reset <PROVIDER>, then re-run onboard
+    • Agent config is writable in the default sandbox so OpenClaw can manage runtime state.
+      Use host-side commands or re-run onboard for durable OpenClaw settings.
+
+  Powered by NVIDIA OpenShell · Nemotron · Agent Toolkit
+  Credentials registered with the OpenShell gateway
+  https://www.nvidia.com/nemoclaw
+
+=== openclaw --version
+bash: line 1: openclaw: command not found
+=== openclaw --help
+bash: line 1: openclaw: command not found
+=== openshell --version
+openshell 0.0.116
+=== openshell --help
+OpenShell CLI tool
+
+USAGE
+  openshell <command> <subcommand> [flags]
+
+SANDBOX COMMANDS
+  sandbox:     Manage sandboxes
+  service:     Expose sandbox services
+  forward:     Manage port forwarding to a sandbox
+  logs:        View sandbox logs
+  policy:      Manage sandbox policy
+  settings:    Manage sandbox and global settings
+  provider:    Manage provider configuration
+
+GATEWAY COMMANDS
+  gateway:     Manage gateways
+  status:      Show gateway status and information
+  whoami:      Show the authenticated user identity
+  inference:   Manage inference configuration
+  doctor:      Diagnose gateway issues
+
+ADDITIONAL COMMANDS
+  term:        Launch the OpenShell interactive TUI
+  completions: Generate shell completions
+  ssh-proxy:   SSH proxy (used by ProxyCommand)
+  help:        Print this message or the help of the given subcommand(s)
+
+FLAGS
+  -g, --gateway <GATEWAY>
+          Gateway name to operate on (resolved from stored metadata) [env: OPENSHELL_GATEWAY=]
+      --gateway-endpoint <GATEWAY_ENDPOINT>
+          Gateway endpoint URL (e.g. <https://gateway.example.com>). Connects directly without looking up gateway metadata [env: OPENSHELL_GATEWAY_ENDPOINT=]
+      --gateway-insecure
+          Skip TLS certificate verification for gateway connections [env: OPENSHELL_GATEWAY_INSECURE=]
+      --workspace <WORKSPACE>
+          Workspace scope for resource operations [env: OPENSHELL_WORKSPACE=] [default: default]
+  -v, --verbose...
+          Increase verbosity (-v, -vv, -vvv)
+  -h, --help
+          Print help
+  -V, --version
+          Print version
+
+EXAMPLES
+  $ openshell sandbox create
+  $ openshell gateway add http://127.0.0.1:8080 --local
+  $ openshell logs my-sandbox
+
+LEARN MORE
+  Use `openshell <command> --help` for more information about a command.
+=== openshell policy --help
+Manage sandbox policy
+
+USAGE
+  openshell policy [OPTIONS] [COMMAND]
+
+COMMANDS
+  set     Update policy on a live sandbox
+  update  Incrementally update policy on a live sandbox
+  get     Show current effective policy for a sandbox or a stored global policy
+  list    List policy history for a sandbox or the global policy
+  delete  Delete the gateway-global policy lock, restoring sandbox-level policy control
+
+FLAGS
+  -g, --gateway <GATEWAY>
+          Gateway name to operate on (resolved from stored metadata) [env: OPENSHELL_GATEWAY=]
+      --gateway-endpoint <GATEWAY_ENDPOINT>
+          Gateway endpoint URL (e.g. <https://gateway.example.com>). Connects directly without looking up gateway metadata [env: OPENSHELL_GATEWAY_ENDPOINT=]
+      --gateway-insecure
+          Skip TLS certificate verification for gateway connections [env: OPENSHELL_GATEWAY_INSECURE=]
+      --workspace <WORKSPACE>
+          Workspace scope for resource operations [env: OPENSHELL_WORKSPACE=] [default: default]
+  -v, --verbose...
+          Increase verbosity (-v, -vv, -vvv)
+  -h, --help
+          Print help
+  -V, --version
+          Print version
+
+
+ALIAS
+  pol
+
+EXAMPLES
+  $ openshell policy get my-sandbox
+  $ openshell policy set my-sandbox --policy policy.yaml
+  $ openshell policy update my-sandbox --add-endpoint api.github.com:443:read-only:rest:enforce
+  $ openshell policy update my-sandbox --add-endpoint realtime.example.com:443:read-write:websocket:enforce:websocket-credential-rewrite,allowed-ip=10.0.0.0/8
+  $ openshell policy update my-sandbox --add-allow 'api.github.com:443:GET:/repos/**'
+  $ openshell policy set --global --policy policy.yaml
+  $ openshell policy delete --global
+  $ openshell policy list my-sandbox
+=== openclaw agent --help
+bash: line 1: openclaw: command not found
+=== openclaw channels --help
+bash: line 1: openclaw: command not found
+=== openclaw skills --help
+bash: line 1: openclaw: command not found
+
+##### openclaw commands, run inside the sandbox container (openshell-default--labwatch-096a5df0-7232-4ab2-bc2a-ae2ab20dfec9) as user sandbox
+=== openclaw --version
+OpenClaw 2026.9.2 (3928bad)
+=== openclaw --help
+
+[gateway]   ┌─────────────────────────────────────────────────────┐
+[gateway]   │  NemoClaw registered                                │
+[gateway]   │                                                     │
+[gateway]   │  Endpoint:  http://host.openshell.internal:8000/v1  │
+[gateway]   │  Provider:  inference                               │
+[gateway]   │  Model:     inference/nvidia/Qwen3.6-35B-A3B-NVFP4  │
+[gateway]   │  Slash:     /nemoclaw                               │
+[gateway]   └─────────────────────────────────────────────────────┘
+
+
+OpenClaw 2026.9.2 (3928bad) — All your chats, one OpenClaw.
+
+Usage: openclaw [options] [command]
+
+Options:
+  --container <name>   Run the CLI inside a running Podman/Docker container
+                       named <name> (default: env OPENCLAW_CONTAINER)
+  --dev                Dev profile: isolate state under ~/.openclaw-dev, default
+                       gateway port 19001, and shift derived ports
+                       (browser/canvas)
+  -h, --help           Display help for command
+  --log-level <level>  Global log level override for file + console
+                       (silent|fatal|error|warn|info|debug|trace)
+  --no-color           Disable ANSI colors
+  --profile <name>     Use a named profile (isolates
+                       OPENCLAW_STATE_DIR/OPENCLAW_CONFIG_PATH under
+                       ~/.openclaw-<name>)
+  -V, --version        output the version number
+
+Commands:
+  Hint: commands suffixed with * have subcommands. Run <command> --help for details.
+  acp *                Run an ACP bridge backed by the Gateway
+  agent *              Run an agent turn via the Gateway (use --local for
+                       embedded)
+  agents *             Manage isolated agents (workspaces + auth + routing)
+  approvals *          Manage approval policy and pending requests
+  attach               Attach Claude Code to a gateway session with scoped MCP
+                       tools
+  audit                Inspect activity records and exact-run identity context
+  automations *        Manage automations (alias for cron)
+  backup *             Create, verify, and restore backup archives and SQLite
+                       snapshots
+  browser *            Manage OpenClaw's dedicated browser (Chrome/Chromium)
+  capability *         Run provider capability commands (fallback alias: infer)
+  channels *           Manage connected chat channels and accounts
+  chat                 Open a local terminal UI (alias for tui --local)
+  clawbot *            Legacy clawbot command aliases
+  completion           Generate shell completion script
+  config *             Non-interactive config helpers
+                       (get/set/patch/unset/file/schema/validate). Run without
+                       subcommand for guided setup.
+  configure            Interactive configuration for credentials, channels,
+                       gateway, and agent defaults
+  connect              Connect this machine to an OpenClaw Gateway as a node
+  cron *               Manage automations (via Gateway)
+  daemon *             Manage the Gateway service (launchd/systemd/schtasks)
+  dashboard            Open the Control UI with your current token
+  database *           Inspect shared-state schema compatibility and write
+                       ownership
+  devices *            Device pairing and auth tokens
+  directory *          Lookup contact and group IDs (self, peers, groups) for
+                       supported chat channels
+  dns *                DNS helpers for wide-area discovery (Tailscale + CoreDNS)
+  docs                 Search the live OpenClaw docs
+  doctor               Health checks + quick fixes for the gateway and channels
+  exec-approvals *     Manage exec approvals (alias for approvals)
+  exec-policy *        Show or synchronize requested exec policy with host
+                       approvals
+  file-transfer *      Review file-transfer standing approvals
+  fleet *              Provision and manage isolated tenant cells (experimental)
+  gateway *            Run, inspect, and query the WebSocket Gateway
+  health               Fetch health from the running gateway
+  help                 Display help for command
+  hooks *              Manage internal agent hooks
+  infer *              Run provider-backed inference commands through a stable
+                       CLI surface
+  logs                 Tail gateway file logs via RPC
+  mcp *                Manage OpenClaw mcp.servers config and channel bridge
+  memory *             Search, inspect, and reindex memory files
+  message *            Send, read, and manage messages and channel actions
+  migrate *            Import state from another agent system
+  models *             Model discovery, scanning, and configuration
+  node *               Run and manage the headless node host service
+  nodes *              Manage gateway-owned nodes (pairing, status, invoke, and
+                       media)
+  onboard *            Guided setup for auth, models, Gateway, workspace,
+                       channels, and skills
+  pairing *            Secure DM pairing (approve inbound requests)
+  plugins *            Manage OpenClaw plugins and extensions
+  promos *             Discover and claim promotional model offers from ClawHub
+  proxy *              Run the OpenClaw debug proxy and inspect captured traffic
+  qr                   Generate a mobile pairing QR code and setup code
+  reset                Reset local config/state (keeps the CLI installed)
+  resume               Resume a recent Gateway session in the TUI
+  sandbox *            Manage sandbox containers (Docker-based agent isolation)
+  secrets *            Secrets runtime controls
+  security *           Audit local config and state for common security
+                       foot-guns
+  sessions *           List stored conversation sessions
+  setup                Chat with OpenClaw; onboard when setup is incomplete
+  skills *             List and inspect available skills
+  status               Show channel health and recent session recipients
+  system *             System tools (events, heartbeat, presence)
+  tasks *              Inspect durable background tasks and TaskFlow state
+  telemetry *          Inspect and manage anonymous usage telemetry
+  terminal             Open a local terminal UI (alias for tui --local)
+  transcripts *        Inspect stored transcripts
+  triage               Collect sanitized diagnostics and open a local coding
+                       agent for repair
+  tui                  Open a terminal UI connected to the Gateway
+  uninstall            Uninstall the gateway service + local data (CLI remains)
+  update *             Update OpenClaw and inspect update channel status
+  users *              Manage durable user profiles and email aliases
+  webhooks *           Webhook helpers and integrations
+  worker               Run the restricted cloud worker runtime
+  worktrees *          Create, inspect, restore, and clean up managed worktrees
+
+Examples:
+  openclaw onboard
+    Run guided setup for a local Gateway, workspace, auth, and channels.
+  openclaw setup
+    Create the baseline config, workspace, and session folders.
+  openclaw configure
+    Change models, Gateway, channels, plugins, skills, and health checks.
+  openclaw status
+    Check Gateway, channel, model, and recent-session status.
+  openclaw doctor --fix
+    Repair common config, service, plugin, and channel problems.
+  openclaw channels add
+    Add or update a chat channel account with guided prompts.
+  openclaw channels status
+    See connected messaging accounts and login state.
+  openclaw --dev gateway
+    Run a dev Gateway (isolated state/config) on ws://127.0.0.1:19001.
+  openclaw gateway run --force
+    Start the Gateway and replace anything bound to its port.
+  openclaw models status
+    Show model/provider auth health before running agents.
+  openclaw plugins list
+    Inspect enabled, disabled, and installed plugins.
+  openclaw agent --to +15555550123 --message "Run summary" --deliver
+    Run one agent turn through the Gateway and optionally deliver the reply.
+  openclaw message send --channel telegram --target @mychat --message "Hi"
+    Send via your Telegram bot.
+
+Docs: https://docs.openclaw.ai/cli
+
+=== openclaw agent --help
+
+OpenClaw 2026.9.2 (3928bad) — All your chats, one OpenClaw.
+
+Usage: openclaw agent [options] [command]
+
+Run an agent turn via the Gateway (use --local for embedded)
+
+Options:
+  --agent <id>               Agent id (overrides routing bindings)
+  --channel <channel>        Delivery channel:
+                             last|telegram|whatsapp|discord|irc|googlechat|slack|signal|imessage|feishu|nostr|buzz|msteams|mattermost|nextcloud-talk|matrix|raft|a2a|line|zalo|clickclack|zalouser|sms|synology-chat|tlon|qa-channel|reef|twitch
+                             (omit to use the main session channel)
+  --deliver                  Send the agent's reply back to the selected channel
+                             (default: false)
+  -h, --help                 Display help for command
+  --json                     Output result as JSON (default: false)
+  --local                    Run the embedded agent locally using configured
+                             provider credentials or local CLI logins (default:
+                             false)
+  -m, --message <text>       Message body for the agent
+  --message-file <path>      Read the agent message body from a UTF-8 file (max
+                             4 MiB)
+  --model <id>               Model override for this run (provider/model or
+                             model id)
+  --reply-account <id>       Delivery account id override
+  --reply-channel <channel>  Delivery channel override (separate from routing)
+  --reply-to <target>        Delivery target override (separate from session
+                             routing)
+  --session-id <id>          Use an explicit session id
+  --session-key <key>        Explicit session key (agent:<id>:<key>, or scoped
+                             to --agent)
+  -t, --to <number>          Recipient number in E.164 used to derive the
+                             session key
+  --thinking <level>         Thinking level: off | minimal | low | medium | high
+                             | xhigh | adaptive | max | ultra where supported
+  --timeout <seconds>        Override agent command timeout (seconds, default
+                             600 or config value)
+  --verbose <on|off>         Persist agent verbose level for the session
+
+Commands:
+  exec                       Run one isolated headless embedded agent turn
+
+Examples:
+  openclaw agent --to +15555550123 --message "status update"
+    Start a new session.
+  openclaw agent --agent ops --message "Summarize logs"
+    Use a specific agent.
+  openclaw agent --agent ops --message-file ./task.md
+    Read a multiline message file.
+  openclaw agent --session-key agent:ops:incident-42 --message "Summarize status"
+    Target an exact session key.
+  openclaw agent --session-id 1234 --message "Summarize inbox" --thinking medium
+    Target a session with explicit thinking level.
+  openclaw agent --to +15555550123 --message "Trace logs" --verbose on --json
+    Enable verbose logging and JSON output.
+  openclaw agent --to +15555550123 --message "Summon reply" --deliver
+    Deliver reply.
+  openclaw agent --agent ops --message "Generate report" --deliver --reply-channel slack --reply-to "#reports"
+    Send reply to a different channel/target.
+
+Docs: https://docs.openclaw.ai/cli/agent
+=== openclaw channels --help
+
+OpenClaw 2026.9.2 (3928bad) — All your chats, one OpenClaw.
+
+Usage: openclaw channels [options] [command]
+
+Manage connected chat channels and accounts
+
+Options:
+  --agent <id>  Agent owner for channel commands that require workspace context
+  -h, --help    Display help for command
+
+Commands:
+  add           Add or update a channel account
+  capabilities  Show provider capabilities (intents/scopes + supported features)
+  dead-letters  Inspect and resubmit failed inbound channel events
+  list          List chat channels (configured by default; pass --all for
+                installable catalog)
+  login         Link a channel account (if supported)
+  logout        Log out of a channel session (if supported)
+  logs          Show recent channel logs from the gateway log file
+  remove        Disable or delete a channel account
+  resolve       Resolve channel/user names to IDs
+  status        Show gateway channel status (use status --deep for local)
+
+Examples:
+  openclaw channels list
+    List configured channels.
+  openclaw channels list --all
+    Show configured, bundled, and installable channels.
+  openclaw channels add
+    Open guided channel setup.
+  openclaw channels status --probe
+    Run channel status checks and probes.
+  openclaw channels add --channel telegram --token <token>
+    Add or update a channel account non-interactively.
+  openclaw channels login --channel whatsapp
+    Link a WhatsApp Web account.
+
+Docs: https://docs.openclaw.ai/cli/channels
+
+=== openclaw skills --help
+
+OpenClaw 2026.9.2 (3928bad) — All your chats, one OpenClaw.
+
+Usage: openclaw skills [options] [command]
+
+List and inspect available skills
+
+Options:
+  --agent <id>  Target agent workspace (defaults to cwd-inferred, then default
+                agent)
+  -h, --help    Display help for command
+  --json        Output as JSON (default: false)
+
+Commands:
+  check         Check which skills are ready, visible, or missing requirements
+  curator       Inspect skill usage and collection review outcomes
+  info          Show detailed information about a skill
+  install       Install a skill from ClawHub, git, or a local directory
+  library       Manage authenticated personal and team skill libraries
+  list          List all available skills
+  search        Search ClawHub skills
+  update        Update ClawHub-installed skills in the active or shared managed
+                directory
+  verify        Verify a ClawHub skill with ClawHub
+  workshop      Manage pending skill proposals
+
+Docs: https://docs.openclaw.ai/cli/skills
+
+=== sandbox runtimes
+/usr/bin/python3
+Python 3.13.5
+v24.18.1
+ls: cannot access '/root/.openclaw/skills': Permission denied
+ls: cannot access '/root/.openclaw': Permission denied
