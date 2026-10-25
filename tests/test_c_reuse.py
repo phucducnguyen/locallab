@@ -124,6 +124,14 @@ class ProblemKeyTest(unittest.TestCase):
                                     ev={"file_line": "src/a.c:12"})), "board3/CODE/src/a.c:12")
         self.assertEqual(k(self.row(kind="HARDFAULT", triage="CODE")), "board3/CODE/HARDFAULT")
         self.assertIsNone(k({"incident_id": None}))
+        # As main's run.py writes it: the device in the evidence, the state in the reason.
+        self.assertEqual(k(self.row(ev={"device": "sensor", "pins": "A2-A3"},
+                                    reason="sensor link STUCK (A3 shorted to ground) on "
+                                           "nucleo-1")), "board3/sensor/STUCK")
+        self.assertEqual(k(self.row(ev={"device": "power"}, reason="VDD 2900 mV on 2 lines")),
+                         "board3/power/LOW")
+        self.assertEqual(k(self.row(kind="ESTOP", ev={"device": "estop"},
+                                    reason="estop pressed on nucleo-1")), "board3/estop/ON")
 
 
 class ReuseTest(ReuseBase):

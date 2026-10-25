@@ -124,7 +124,7 @@ def _state_word(v):
         v = v[-1]
     if not isinstance(v, str):
         return None
-    m = _STATE.search(v.upper())
+    m = _STATE.search(v)  # case-sensitive: "on" in a sentence is not ON
     return m.group(1) if m else None
 
 
@@ -147,9 +147,9 @@ def problem_key(row):
     if device is None:
         device = "loopback" if kind == "HEALTH_FAIL" else kind
     state = _state_word(ev.get("state")) or _state_word(ev.get(device))
-    if state is None and "LOW" in str(ev.get("cause") or "").upper():
+    if state is None and (device == "power" or "LOW" in str(ev.get("cause") or "").upper()):
         state = "LOW"
-    if state is None and device == "estop":
+    if state is None and (device == "estop" or kind == "ESTOP"):
         state = "ON"
     if state is None:
         state = _state_word(clean(row["reason"])) or STATE_FALLBACK
