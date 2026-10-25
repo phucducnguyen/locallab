@@ -1,13 +1,16 @@
 # LocalLab
 
+The overview and run commands are in the [README](../README.md); this is the longer write-up.
+Internal code name: Lab Watch (module and path names use labwatch).
+
 A hardware-in-the-loop watcher for a firmware test bench, running entirely on one NVIDIA GB10.
 When a board on the bench goes wrong, LocalLab says within seconds whether to call the hardware
 people or the firmware people, explains why with evidence, and files the ticket.
 
 ## The problem
 
-{{PATRICK_STORY: one or two sentences, a real night when a bench failure cost the team a day}}
-On a shared test bench, a red result arrives with no context. Did a wire come loose or did a
+Hardware test benches fail silently or noisily. When a board test fails, teams lose time deciding
+whether it is the board or the latest code. On a shared test bench, a red result arrives with no context. Did a wire come loose or did a
 commit break the build? The evidence is spread across three tools, and that first question decides
 who gets woken up.
 
@@ -82,11 +85,14 @@ the agent says it can't tell and names the one check that would.
 
 ## Results
 
-On {{N_TRIALS}} trials today, the rule was right on {{RULE_RIGHT}} and the agent on {{AGENT_RIGHT}}; the agent said it couldn't tell on {{CANT_TELL}}; the median time from fault to first alert was {{MEDIAN_FAULT_TO_ALERT_S}} s. The agent's skill and prompt were frozen at main ebada0f before any scored trial.
+**Scored 6-trial run: results to be added in results/ after the run.** The agent's skill and prompt
+were frozen at main ebada0f before any scored trial.
 
 Measured today on the real board, the first alert reached Telegram 0.78-2.03 s after the first
-bad serial line: 0.78 s for the stop button, 1.97-2.03 s for a pulled wire, 1.07 s for the HardFault.
-The local model's explanation took 18-46 s. In the HardFault beat the bench found `src/cmd.c:35`, and
+bad serial line in the demo beats: 0.78 s for the stop button, 1.97-2.03 s for a pulled wire, 1.07 s
+for the HardFault (over all 10 rehearsal incidents 0.78-3.89 s, median 1.58 s; see
+[results/README.md](../results/README.md)). The local model's explanation took 18-46 s for 9 of 10
+(one 91 s, for a silent board). In the HardFault beat the bench found `src/cmd.c:35`, and
 the explanation named the commit.
 
 **Fleet.** Eight emulated boards in QEMU ran next to the real one through the bench's own serial
@@ -108,6 +114,8 @@ branch `day/health-dump` (github.com/phucducnguyen/nucleo-f446re-fault-demo).
 ## Disclosure
 
 The test firmware is our own open-source repo, published before today. We prototyped the idea last week; none of that code is here. This repo started empty this morning, and every line in it was written today.
+
+AI coding tools were used to write code today; none takes part at runtime.
 
 ## How to run it
 

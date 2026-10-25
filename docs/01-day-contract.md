@@ -1,5 +1,7 @@
 # LocalLab (internal name Lab Watch): the day contract (Sun Oct 25 2026)
 
+> This was the build-day contract between the parallel workstreams; the README is the overview.
+
 The decisions every lane builds against today. Written in the main checkout at 10:30. Everything
 here is PROPOSED until its Sunday check passes on the real board. To change it, a lane proposes the
 change in its stage report; main edits this file.
@@ -25,7 +27,7 @@ library plus pyserial.
 | --- | --- | --- |
 | Bench DB | `~/.local/state/labwatch/bench.db` | `LW_DB` |
 | Hold flag | `~/.local/state/labwatch/hold` | `LW_HOLD` |
-| Secrets dir | `~/.config/labwatch/` (files chmod 600, placed by Patrick) | `LW_SECRETS_DIR` |
+| Secrets dir | `~/.config/labwatch/` (files chmod 600, placed by the operator) | `LW_SECRETS_DIR` |
 | Bench firmware repo | `~/bench-fw` (main only; no CASES.md, logs or bugs) | `LW_FW_REPO` |
 | Endpoint port | 8765 | `LW_PORT` |
 | Endpoint host | the docker bridge IP, found at startup | `LW_HOST` |

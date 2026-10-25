@@ -1,8 +1,8 @@
 # LocalLab demo script
 
 Three minutes, five beats, then the additions for a five-minute slot. Lines in quotes are what
-Patrick says. Commands run in the GB10 console. Numbers come only from today's scoring log; every
-`{{...}}` is filled at 16:00.
+the presenter says. Commands run in the GB10 console. Numbers come only from today's measurements
+(see the Results section of the [README](../README.md)).
 
 ## Screen layout
 
@@ -35,7 +35,8 @@ that it is a recording.
 
 - **On screen:** the dashboard all green with its plain headline; Telegram and the tracker quiet.
   Board in camera.
-- **Say:** "{{PATRICK_STORY_ONE_LINE}} LocalLab answers the first question for you: hardware or
+- **Say:** "When a board test fails, teams lose time deciding whether it's the board or the latest code.
+  LocalLab answers the first question for you: hardware or
   code, and who to call."
 - **Type:** nothing.
 - **Fallback:** none needed; keep talking.
@@ -47,7 +48,7 @@ that it is a recording.
 - **Say, while it lands:** "The dashboard turns the sensor wire red. The bench decides with a
   fixed rule, not the model: this check passed on this same firmware, so it's hardware." When the
   alert lands, stop the timer and read it: "Board 1: the sensor wire came loose. Team: hardware.
-  Not a code problem. First alert in {{THIS_PULL_S}} seconds." The board photo follows as a reply, then the 🧠
+  Not a code problem." Read the first-alert time off the timer (today: 1.97-2.03 s for a pulled wire). The board photo follows as a reply, then the 🧠
   explanation: "It ends with a DIAGNOSIS line, and every claim behind it cites a serial line."
   Show the new issue labelled hardware.
 - **Live moment:** type `/ask <n>` in the group with the incident number from the alert. "Anyone
@@ -95,10 +96,10 @@ that it is a recording.
 
 ### Beat 5: the number and the disclosure (2:20-2:40, 20 s)
 
-- **On screen:** the scoring sentence, then `git log --oneline` in the shell pane.
-- **Say:** "On {{N_TRIALS}} trials today, the rule was right on {{RULE_RIGHT}} and the agent on
-  {{AGENT_RIGHT}}; the agent said it couldn't tell on {{CANT_TELL}}; the median time from fault to
-  first alert was {{MEDIAN_FAULT_TO_ALERT_S}} s." Then: "The test firmware is our own open-source
+- **On screen:** the results sentence, then `git log --oneline` in the shell pane.
+- **Say:** "Measured today on the real board, the first alert came 0.78 to 2.03 seconds after the first bad
+  line, and the local explanation took 18 to 46 seconds. The scored six-trial results go in results/
+  after the run." Then: "The test firmware is our own open-source
   repo, published before today. We prototyped the idea last week; none of that code is here. This
   repo started empty this morning, and every line in it was written today."
 - **Type:** `git -C ~/lw log --oneline | tail -5` (the repo is `~/lw` on the GB10).
@@ -108,7 +109,9 @@ That leaves about 20 s of slack inside the 3 minutes.
 
 ## The 5-minute additions, in order
 
-1. **The full story (+45 s).** Before beat 2: {{PATRICK_STORY_FULL}}.
+1. **The problem in full (+45 s).** Before beat 2: hardware test benches fail silently or noisily.
+   When a board test fails, teams lose time deciding whether it is the board or the latest code, and
+   that first question decides who gets called. LocalLab answers it in seconds, locally.
 2. **A fault the judge picks (+45 s).** After beat 3. Offer: any of the three wires out, the blue
    stop button held ("someone pressed the stop button. Not a fault."), the RESET button, the USB
    cable pulled for 20 s. Say what the bench should conclude before it does. Grounding A1, A3 or A5
@@ -125,7 +128,7 @@ it only after a rehearsal, and say it is optional.
 
 One clip per beat, recorded on the real setup, each a little shorter than its beat.
 
-- [ ] Clip 1: board and quiet Telegram while Patrick says the story line (20 s).
+- [ ] Clip 1: board and quiet Telegram while the presenter says the problem line (20 s).
 - [ ] Clip 2: sensor wire pull with timer, dashboard red, first alert, board photo, 🧠
       explanation, `/ask` answer, hardware issue, wire back, issue closed (45 s).
 - [ ] Clip 3: the cherry-pick, verified flash, three passes, HardFault, firmware issue with

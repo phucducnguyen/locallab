@@ -1,6 +1,6 @@
 """The bench's alert wording (docs/01-day-contract.md, "Alerts"), fixed text, no model.
 
-Lane T (2026-10-25, Patrick's rule): every Telegram message is 2-3 short lines in common
+Alert rule (2026-10-25, set by the operator): every Telegram message is 2-3 short lines in common
 everyday English. The first line says what happened, with the board and the incident
 number; the next says the team and points to /ask. Technical words (HardFault, pins,
 file:line, vdd) appear only after "Details:" and only when needed. Raw lines, sha and

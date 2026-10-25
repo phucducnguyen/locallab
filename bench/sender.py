@@ -8,7 +8,7 @@ On success it stores telegram_message_id and sent (only where sent IS NULL,
 so a sent row is never sent again). If Telegram is unreachable the row stays
 unsent and is retried with a short backoff. It never calls getUpdates.
 
-Watcher health (lane A item 10): if the bench's heartbeat is older than 10 s
+Watcher health: if the bench's heartbeat is older than 10 s
 it posts "⚠️ Local Lab is blind: bench down since T" once per outage. When the
 bench has logged LINK_DOWN (the USB port gone) and no LINK_UP for 10 s it
 posts "Local Lab is not watching bench-1: link down since T" once, and on

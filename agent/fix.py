@@ -1,4 +1,4 @@
-"""python3 -m agent.fix --incident <id>: the fix beat. The logic is lane C's, in tracker/fix.py."""
+"""python3 -m agent.fix --incident <id>: the fix beat. The logic lives in tracker/fix.py."""
 
 import sys
 

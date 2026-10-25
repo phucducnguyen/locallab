@@ -2,7 +2,7 @@
 
     python3 -m stub.emit --db /tmp/lw-stub.db --scenario jumper|hardfault|flap|recover
 
-Prints the new incident id. Lanes B and C watch GET /events?since=<cursor>.
+Prints the new incident id. The agent and the tracker mirror watch GET /events?since=<cursor>.
 """
 
 import argparse

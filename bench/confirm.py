@@ -10,7 +10,7 @@ by reflashing the last passing sha and watching whether output returns:
 A reflash that could not be judged (no last passing sha, a build error, the
 flash hook raising) leaves the triage UNKNOWN and says why.
 
-The hook (stage A3 provides it):
+The hook (bench.flash provides it):
 
     flash_and_capture(sha) -> Capture
 
@@ -204,7 +204,7 @@ def _merge_evidence(raw, res):
 
 def write_confirm(conn, res, incident_id=None, run_id=None):
     """Write a ConfirmResult: incident and run triage/reason/route/evidence, routing rows
-    (updated in place so lane C's ticket stays), an event, and the "confirmed" alert.
+    (updated in place so the tracker mirror's ticket stays), an event, and the "confirmed" alert.
 
     Returns the alert id (None without an incident, or if already written).
     """

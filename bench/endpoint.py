@@ -25,7 +25,7 @@ there with LW_HOST=172.18.0.1) and LW_PORT (8765).
 - Responses: parsed fields only, printable ASCII, every string capped at
   120 characters, no serial tail; commit text only under "data".
 
-Same JSON shapes as stub/serve.py, so lanes B, C and D switch by URL only.
+Same JSON shapes as stub/serve.py, so the agent, the tracker mirror and the scoring tools switch by URL only.
 """
 
 import argparse

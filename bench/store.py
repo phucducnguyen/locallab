@@ -1,6 +1,6 @@
-"""The bench's SQLite: the shared tables of docs/schema.sql plus lane A's own.
+"""The bench's SQLite: the shared tables of docs/schema.sql plus the bench's own.
 
-Every connection uses WAL and a 5 s busy timeout (day contract). Lane A's own
+Every connection uses WAL and a 5 s busy timeout (day contract). The bench's own
 tables never rename or change the shared ones.
 """
 

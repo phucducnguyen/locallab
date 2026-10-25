@@ -3,7 +3,7 @@
     python3 -m tracker.mirror [--db PATH] [--state PATH] [--once] [--interval 2]
 
 Each pass plans, then replays. Planning reads the bench DB only and queues
-operations in an outbox table in this lane's own state DB (default
+operations in an outbox table in the mirror's own state DB (default
 tracker_state.db next to the bench DB); replay sends them in order and stops
 while the tracker is down, so no create, comment or close is ever dropped.
 

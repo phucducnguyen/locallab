@@ -16,7 +16,7 @@ Lists every sentence with no bracketed citation (noting whether it is marked
 
 Several citations may share one bracket, separated by ";". The DIAGNOSIS line
 is not a sentence. Prints a JSON report; exit 0 when nothing is listed, else 1.
-Lane D imports check(text, record, show=None).
+The scoring tools import check(text, record, show=None).
 """
 
 import argparse

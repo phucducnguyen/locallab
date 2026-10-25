@@ -6,7 +6,7 @@
 
 The preset is in the NemoClaw custom-preset format (a `preset:` block plus
 `network_policies:`), applied with `nemoclaw <sandbox> policy add --from-file`.
-It allows the bench endpoint (lane A, port 8765) on the docker bridge address
+It allows the bench endpoint (port 8765) on the docker bridge address
 only: the interface's read-only routes and its two side-effect routes, from
 python3 (the skill's client) only.
 

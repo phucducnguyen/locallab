@@ -1,4 +1,4 @@
-"""Lane A's request queue: what the endpoint and the repo watcher ask the bench to do.
+"""The bench's request queue: what the endpoint and the repo watcher ask the bench to do.
 
 Neither the endpoint nor the watcher touches the board. They write one row
 into bench_requests (in the bench DB); the bench process (bench.run) is the

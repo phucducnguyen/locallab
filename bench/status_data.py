@@ -2,7 +2,7 @@
 
 Everything here only reads. The DB is opened with a `file:...?mode=ro` URI,
 so any write through this connection fails. The serial port is never opened
-(lane A's serial owner is its only user); serial lines come from a log file
+(the bench's serial owner is its only user); serial lines come from a log file
 the bench writes or from the events table (fields.line, raw_ts).
 
 Board text and git text are data: every string that leaves this module for
@@ -206,7 +206,7 @@ class Db:
                     names = None
                 if names:
                     st["causes"][inc["id"]] = names
-        try:  # lane A's own table; absent in the stub
+        try:  # the bench's own table; absent in the stub
             r = self.query("SELECT t FROM heartbeat WHERE id=1")
             st["heartbeat"] = r[0][0] if r else None
         except sqlite3.Error:

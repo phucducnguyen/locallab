@@ -3,7 +3,7 @@
     python3 -m fleet.soak --state-dir ~/lw-fleet/run --seconds 120 \
         [--reset] [--json out.json] [--host-stats]
 
-Each board gets its own bench.serial_owner.SerialOwner (lane A's code, used
+Each board gets its own bench.serial_owner.SerialOwner (the bench's code, used
 as is) on the board's stable link. Per board it counts LW records by kind,
 non-LW lines, unreadable bytes, whether BOOT and RESULT were seen, HEALTH
 lines per wall-clock second (mean, min, max over whole seconds), and every

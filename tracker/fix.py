@@ -16,7 +16,7 @@ decides HARDWARE vs CODE; it only proposes a diff, and host code decides the res
    fix_max_lines lines (default 40) and pass `git apply --check`.
 3. Host code applies it in a temp clone of the bench repo (LW_FW_REPO, default
    ~/bench-fw), commits it as "Lab Watch bench", and flashes it through the
-   flash step (config verify_cmd, else lane A's bench.flash.flash_and_capture).
+   flash step (config verify_cmd, else the bench's bench.flash.flash_and_capture).
    It passes only with LW BOOT fw=<fix sha>, LW RESULT PASS, then 3 LW HEALTH
    loopback=OK lines, no HardFault and no second boot. While it runs the bench
    hold file is held, so the endpoint takes no /run.
@@ -325,7 +325,7 @@ def validate_diff(text, max_lines, cited):
 # -- verification --------------------------------------------------------------
 def check_serial(lines, sha, need=HEALTH_NEEDED):
     """(ok, reason, evidence lines). Discards everything before LW BOOT fw=<sha>."""
-    from bench.parser import parse_line  # lane A's shared parser
+    from bench.parser import parse_line  # the bench's shared parser
     booted, result, health, kept = False, None, 0, []
     for raw in lines:
         for rec in parse_line(raw)["records"]:
@@ -382,7 +382,7 @@ def cmd_verifier(template, timeout_s):
 
 
 def lane_a_verifier(timeout_s):
-    """Lane A's bench.flash, imported lazily: flash_and_capture(src_dir, sha, timeout_s) -> lines."""
+    """The bench's bench.flash, imported lazily: flash_and_capture(src_dir, sha, timeout_s) -> lines."""
     def verify(src, sha, timeout=timeout_s):
         try:
             from bench import flash
@@ -495,7 +495,7 @@ class Fixer:
 
     # -- the agent -------------------------------------------------------
     def ask_agent(self, iid, sha, path, line, evidence):
-        from agent.explain import clean_reply, fill, run_agent  # lane B's runner, same command
+        from agent.explain import clean_reply, fill, run_agent  # the agent's runner, same command
         session = "%sfix-incident-%d-%s" % (self.cfg["session_prefix"], iid, uuid.uuid4().hex)
         message = fill(self.cfg["fix_prompt"], {"id": str(iid), "sha": sha, "file": path,
                                                 "file_line": "%s:%d" % (path, line),

@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Lab Watch tracker setup on the GB10: Forgejo 16.0.6-rootless in container lw-tracker.
 #
-#   tracker/setup_forgejo.sh            (run from the repo root, as Patrick)
+#   tracker/setup_forgejo.sh            (run from the repo root, as the operator)
 #
 # Before the first run, place the admin password (one line) in
 #   ~/.config/labwatch/tracker_admin_password   (chmod 600)
@@ -80,7 +80,7 @@ if [ -s "$SECRETS/tracker_setup_token" ] && [ -s "$SECRETS/tracker_token" ]; the
     say "tokens: $SECRETS/tracker_setup_token and tracker_token exist; user and tokens left as they are"
 elif [ -e "$LEGACY_SETUP" ] || [ -e "$LEGACY_BENCH" ]; then
     # The offline installer set this tracker up already. Do not mint a second
-    # set of tokens next to its own; ask Patrick to place its files (not read here).
+    # set of tokens next to its own; ask the operator to place its files (not read here).
     die "the offline installer's token files exist ($LEGACY_SETUP, $LEGACY_BENCH) but $SECRETS/tracker_setup_token and $SECRETS/tracker_token do not. Place them yourself, then rerun:
   install -m 600 $LEGACY_SETUP $SECRETS/tracker_setup_token
   install -m 600 $LEGACY_BENCH $SECRETS/tracker_token"
