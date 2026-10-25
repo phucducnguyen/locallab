@@ -87,6 +87,15 @@ main { display: grid; grid-template-columns: minmax(0, 56fr) minmax(0, 44fr); ga
   display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; }
 #cites li b { color: var(--ai); }
 #cites li span { color: #c3cbd3; }
+#aiask { display: none; margin-top: 6px; }
+#aiask.on { display: block; }
+#askq { font-size: 26px; font-weight: 700; overflow: hidden; display: -webkit-box;
+  -webkit-box-orient: vertical; -webkit-line-clamp: 2; }
+#aska { font-size: 24px; color: #d6c9f5; margin-top: 4px; overflow: hidden; display: -webkit-box;
+  -webkit-box-orient: vertical; -webkit-line-clamp: 3; }
+#aipanel.nocite.ask { grid-template-columns: minmax(0, 40fr) minmax(0, 32fr) minmax(0, 28fr); }
+#aipanel.nocite.ask #aicite { display: block; }
+#aipanel.nocite #citeh, #aipanel.nocite #cites { display: none; }
 footer { padding: 4px 48px 10px; font-size: 24px; color: #cdbdf5; display: flex;
   justify-content: space-between; }
 #clock { font-variant-numeric: tabular-nums; }
@@ -140,6 +149,7 @@ body.stale main { opacity: .4; }
     <text id="b1label" x="360" y="292" text-anchor="end" font-size="34" font-weight="800"
           fill="#7a8592">stop button</text>
     <text x="360" y="322" text-anchor="end" font-size="18" fill="#8c99a6">B1 &#183; PC13</text>
+    <g id="aihl"></g>
     <g id="pins"></g>
     <g id="wires"></g>
   </svg>
@@ -155,7 +165,9 @@ body.stale main { opacity: .4; }
     <div class="rv" id="rvai"><i>AI:</i> -</div>
     <div id="rvverdict"></div>
     <div id="rvnote">The rule decides; the AI explains.</div></div>
-  <div id="aicite"><div class="aih">What the AI looked at</div><ul id="cites"></ul></div>
+  <div id="aicite"><div id="citeh" class="aih">What the AI looked at</div><ul id="cites"></ul>
+    <div id="aiask"><div class="aih">Asked in Telegram</div><div id="askq"></div>
+      <div id="aska"></div></div></div>
 </section>
 <footer><span id="foot">AI inference: 100% on this GB10 (127.0.0.1:8000) &#183; No cloud AI calls &#183; Only outbound traffic: Telegram alerts</span>
   <span id="clock"></span></footer>
@@ -351,7 +363,45 @@ function renderAI(ai) {
     else if (c.kind === "bit") span(li, "", " fault bit");
     ul.appendChild(li);
   });
-  document.getElementById("aipanel").className = cites.length ? "" : "nocite";
+  var ask = ai.ask, box = document.getElementById("aiask");
+  box.className = ask && ask.question ? "on" : "";
+  if (ask && ask.question) {
+    setText("askq", "“" + ask.question + "”");
+    var a = "";
+    if (ask.status === "asked") a = "🧠 AI is answering… " + Math.floor(ask.elapsed_s || 0) + " s";
+    else if (ask.status === "answered") a = ask.answer || "(empty answer)";
+    else if (ask.status === "timeout") a = "No answer in time.";
+    else if (ask.status === "failed") a = "The agent could not answer.";
+    setText("aska", a);
+  }
+  document.getElementById("aipanel").className = (cites.length ? "" : "nocite") +
+    (ask && ask.question ? " ask" : "");
+  renderHighlight(ai.highlight || []);
+}
+
+// Violet marks only where the agent's own words name a label in this drawing.
+var HL_PIN = {A0: 0, A1: 1, A2: 2, A3: 3, A4: 4, A5: 5};
+var hlKey = null;
+function renderHighlight(list) {
+  var key = list.join(",");
+  if (key === hlKey) return;
+  hlKey = key;
+  var g = document.getElementById("aihl"), ai = "#b48cff";
+  while (g.firstChild) g.removeChild(g.firstChild);
+  list.forEach(function (h) {
+    if (h in HL_PIN) {
+      el("circle", {cx: PIN_X, cy: pinY(HL_PIN[h]), r: 19, fill: "none", stroke: ai,
+                    "stroke-width": 6}, g);
+    } else if (h === "B1" || h === "PC13" || h === "estop") {
+      el("circle", {cx: 540, cy: 290, r: 46, fill: "none", stroke: ai, "stroke-width": 7}, g);
+    } else if (h === "USB") {
+      el("rect", {x: 600, y: 4, width: 100, height: 64, rx: 8, fill: "none", stroke: ai,
+                  "stroke-width": 6}, g);
+    } else if (wireEls[h]) {
+      el("path", {d: wireEls[h].path.getAttribute("d"), fill: "none", stroke: ai,
+                  "stroke-width": 30, "stroke-linecap": "round", opacity: 0.55}, g);
+    }
+  });
 }
 
 function waiting(sub) {

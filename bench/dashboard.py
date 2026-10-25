@@ -26,7 +26,7 @@ from agent.check_citations import (BIT_RE, BRACKET_RE, DIFF_RE, FILE_LINE_RE, IN
                                    SERIAL_RE)
 from agent.explain import parse_diagnosis
 from bench.alerts import UNAVAILABLE
-from bench.status_data import (VDD_MIN_MV, Db, clean, loads, parse_health)
+from bench.status_data import (VDD_MIN_MV, Db, clean, loads, open_ro, parse_health)
 from bench.triage import ROUTES
 
 PAGE_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "dashboard_page.html")
@@ -378,6 +378,51 @@ def parse_citations(text, limit=MAX_CITES):
     return out
 
 
+PIN_RE = re.compile(r"(?<![A-Za-z0-9_])(A[0-5]|PC13|B1|USB)(?![A-Za-z0-9_])")
+CAUSE_PARTS = ("sensor", "radio", "loopback", "estop")
+
+
+def highlights(text, cause):
+    """Drawing labels the agent's own text names exactly (A0-A5, PC13, B1, USB), plus the
+    device a CAUSE containing sensor/radio/loopback/estop names. Nothing fuzzier."""
+    out = []
+    for m in PIN_RE.finditer(text if isinstance(text, str) else ""):
+        if m.group(1) not in out:
+            out.append(m.group(1))
+    for part in CAUSE_PARTS:
+        if part in (cause or "").lower() and part not in out:
+            out.append(part)
+    return out
+
+
+def asks_path(db):
+    return os.environ.get("LW_ASKS_DB") or os.path.join(os.path.dirname(db), "asks.db")
+
+
+def latest_ask(path, now):
+    """The newest /ask row from the commands' asks DB (read-only), or None if absent."""
+    try:
+        conn = open_ro(path)
+    except (OSError, sqlite3.Error):
+        return None
+    try:
+        r = conn.execute("SELECT id, t_asked, question, incident_id, answer, t_answered, status "
+                         "FROM asks ORDER BY id DESC LIMIT 1").fetchone()
+    except sqlite3.Error:
+        return None
+    finally:
+        conn.close()
+    if r is None:
+        return None
+    status = r["status"] if r["status"] in ("asked", "answered", "timeout", "failed") else None
+    t = r["t_asked"] if isinstance(r["t_asked"], (int, float)) else None
+    return {"id": r["id"], "question": clean(r["question"], 200),
+            "answer": answer_text(r["answer"], 2) if isinstance(r["answer"], str) else None,
+            "status": status, "incident": r["incident_id"],
+            "elapsed_s": round(max(0.0, now - t), 1) if t is not None and status == "asked"
+            else None}
+
+
 def rule_vs_ai(triage, route, diag, have_explain):
     """{rule, rule_route, ai, cause, status, verdict} for the newest incident."""
     out = {"rule": triage, "rule_route": route or ROUTES.get(triage) or None,
@@ -406,7 +451,8 @@ class Dashboard:
 
     def ai_idle(self):
         return {"model": MODEL, "badge": self.badge, "live": self.live(), "phase": "idle",
-                "incident": None}
+                "incident": None, "highlight": [],
+                "ask": latest_ask(asks_path(self.db.path), time.time())}
 
     def state(self):
         with self.lock:
@@ -583,6 +629,8 @@ class Dashboard:
                 line = loads(rows[0]["fields"]).get("line") if rows else None
                 c["line"] = clean(line, 160) if isinstance(line, str) else None
         ai["citations"] = cites
+        ai["highlight"] = highlights(full or alert_text, diag and diag["cause"]) \
+            if ai["phase"] == "done" else []
         return ai
 
     def _quiet_headline(self, bad, devices, board, stale):

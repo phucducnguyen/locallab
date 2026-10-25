@@ -262,6 +262,59 @@ class CitationTest(unittest.TestCase):
         self.assertEqual((r["verdict"], r["rule_route"]), ("differs", "Triage"))
 
 
+class HighlightAskTest(AiStateTest):
+    def test_highlight_exact_only(self):
+        h = dashboard.highlights
+        self.assertEqual(h("The wire on A2-A3 is loose; see B1 and PC13. 0xA0 BA1 A6", None),
+                         ["A2", "A3", "B1", "PC13"])
+        self.assertEqual(h("nothing named", "sensor-open"), ["sensor"])
+        self.assertEqual(h("nothing named", "new-code"), [])
+        self.assertEqual(h(None, None), [])
+
+    def test_highlight_only_when_explained(self):
+        conn, iid, t = self.setup_incident()
+        conn.close()
+        self.assertEqual(self.state()["ai"]["highlight"], [])
+        conn = __import__("stub.db", fromlist=["connect"]).connect(self.path)
+        add_explain(conn, iid, "\U0001f9e0 #%d: Pin A2 reads open.\n%s" % (iid, DIAG_HW),
+                    t + 20.0)
+        conn.close()
+        self.assertEqual(self.state()["ai"]["highlight"], ["A2", "sensor"])
+
+    def asks(self, rows):
+        import sqlite3
+        c = sqlite3.connect(os.path.join(self.tmp.name, "asks.db"))
+        c.execute("CREATE TABLE asks (id INTEGER PRIMARY KEY, t_asked REAL, question TEXT, "
+                  "incident_id INTEGER, answer TEXT, t_answered REAL, status TEXT)")
+        c.executemany("INSERT INTO asks (t_asked, question, incident_id, answer, t_answered, "
+                      "status) VALUES (?,?,?,?,?,?)", rows)
+        c.commit()
+        c.close()
+
+    def test_ask_absent_then_newest(self):
+        self.empty().close()
+        self.assertIsNone(self.state()["ai"]["ask"])
+        now = time.time()
+        self.asks([(now - 50, "old one?", None, "Old.", now - 40, "answered"),
+                   (now - 4, "why is it red?", 1, None, None, "asked")])
+        ask = self.state()["ai"]["ask"]
+        self.assertEqual((ask["question"], ask["status"]), ("why is it red?", "asked"))
+        self.assertAlmostEqual(ask["elapsed_s"], 4, delta=1)
+
+    def test_ask_answered_and_bad_table(self):
+        self.empty().close()
+        now = time.time()
+        self.asks([(now - 9, "what failed?", None, "The sensor wire is open [incident 1]. "
+                    "Check it. Third sentence.", now - 2, "answered")])
+        ask = self.state()["ai"]["ask"]
+        self.assertEqual(ask["answer"], "The sensor wire is open. Check it.")
+        self.assertIsNone(ask["elapsed_s"])
+        os.remove(os.path.join(self.tmp.name, "asks.db"))
+        import sqlite3
+        sqlite3.connect(os.path.join(self.tmp.name, "asks.db")).close()
+        self.assertIsNone(self.state()["ai"]["ask"])
+
+
 class PageTest(unittest.TestCase):
     def test_no_external_urls(self):
         html = dashboard.load_page()
