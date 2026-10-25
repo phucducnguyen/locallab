@@ -1,21 +1,28 @@
 """Mirror the bench's routing rows into Forgejo: one issue per incident.
 
-    python3 -m tracker.mirror [--db PATH] [--once] [--interval 2]
+    python3 -m tracker.mirror [--db PATH] [--state PATH] [--once] [--interval 2]
 
-For each routing row without a ticket (and with a route), create one issue
-titled "[lw-<incident id>] <board> <kind>: <triage>", labelled by route, whose
-body holds the route, the reason, the verified sha and file:line, and never any
-source or diff text. The issue number goes into routing.ticket and
-incidents.ticket at once.
+Each pass plans, then replays. Planning reads the bench DB only and queues
+operations in an outbox table in this lane's own state DB (default
+tracker_state.db next to the bench DB); replay sends them in order and stops
+while the tracker is down, so no create, comment or close is ever dropped.
 
-Dedupe: the stored number is the key. Before each create the routing id is
-written to a small journal next to the DB; it is removed once the number is
-stored. A row still in the journal at the next attempt (the mirror died, or a
-create timed out) is first searched for by q=lw-<id>, retried for up to 10 s
-because the tracker's search lags, and only an exact title match is accepted.
+- Create: for each routing row without a ticket (and with a route), one issue
+  titled "[lw-<incident id>] <board> <kind>: <triage>", labelled by route, body
+  with the route, the reason, the verified sha and file:line, never source or
+  diff text. The number goes into routing.ticket and incidents.ticket at once.
+- Dedupe: the stored number is the key. Only a create that was sent but whose
+  number was never stored (a crash, a lost reply) is searched for by q=lw-<id>,
+  retried for up to 10 s for the indexer lag; only an exact title match counts.
+- Flaps: one comment with the flap count, at most once per 60 s per incident.
+- Resolve: a comment with the duration, then close. An incident that has
+  flapped is closed once it has stayed resolved for the 60 s flap window; a
+  closed issue whose incident reopens is reopened.
+- Comments carry "(lab watch update <op id>)" so an ambiguous retry is checked
+  against the issue's comments instead of posted twice.
 
 Env: LW_DB (bench DB), LW_SECRETS_DIR (tracker_token, tracker_labels.json),
-LW_TRACKER (base URL), LW_TRACKER_STATE (journal path).
+LW_TRACKER (base URL), LW_TRACKER_STATE (state DB path).
 """
 
 import argparse
@@ -34,6 +41,7 @@ from tracker.forgejo import DEFAULT_REPO, Forgejo, TrackerError, secrets_dir  # 
 ROUTE_LABEL = {"Hardware team": "hardware", "Firmware team": "firmware", "Triage": "needs-triage"}
 SEARCH_WAIT_S = 10.0
 SEARCH_STEP_S = 1.0
+FLAP_COMMENT_S = 60.0
 
 _SHA = re.compile(r"[0-9a-f]{7,40}")
 _FILE_LINE = re.compile(r"[A-Za-z0-9_./-]{1,100}:[0-9]{1,6}")
@@ -78,38 +86,6 @@ def _file_line(*evidence_texts):
     return None
 
 
-class Journal:
-    """Routing ids whose create was sent but whose number is not yet stored."""
-
-    def __init__(self, path):
-        self.path = path
-        try:
-            with open(path, encoding="utf-8") as f:
-                self.ids = set(int(x) for x in json.load(f).get("pending", []))
-        except FileNotFoundError:
-            self.ids = set()
-
-    def __contains__(self, rid):
-        return rid in self.ids
-
-    def _save(self):
-        tmp = self.path + ".tmp"
-        with open(tmp, "w", encoding="utf-8") as f:
-            json.dump({"pending": sorted(self.ids)}, f)
-            f.flush()
-            os.fsync(f.fileno())
-        os.replace(tmp, self.path)
-
-    def add(self, rid):
-        self.ids.add(rid)
-        self._save()
-
-    def discard(self, rid):
-        if rid in self.ids:
-            self.ids.discard(rid)
-            self._save()
-
-
 ROWS = """
 SELECT r.id, r.incident_id, r.run_id, r.triage, r.route, r.reason,
        i.board, i.kind, i.firmware, i.evidence AS i_evidence,
@@ -151,35 +127,172 @@ def issue_text(row):
     return key, title, "\n".join(body)
 
 
+STATE_SCHEMA = """
+CREATE TABLE IF NOT EXISTS outbox (
+    id         INTEGER PRIMARY KEY,      -- replay order
+    key        TEXT NOT NULL,            -- lw-<incident id> or lw-run-<run id>
+    op         TEXT NOT NULL CHECK (op IN ('create', 'comment', 'close', 'reopen')),
+    title      TEXT,
+    body       TEXT,
+    label_id   INTEGER,
+    created    REAL NOT NULL,
+    sent       REAL,                     -- set before the call; sent with done NULL = unknown
+    attempts   INTEGER NOT NULL DEFAULT 0,
+    done       REAL,
+    how        TEXT,
+    last_error TEXT
+);
+CREATE INDEX IF NOT EXISTS outbox_pending ON outbox(done, id);
+CREATE TABLE IF NOT EXISTS issues (
+    key         TEXT PRIMARY KEY,
+    incident_id INTEGER,
+    run_id      INTEGER,
+    number      INTEGER,                 -- the issue number, once the create is done
+    flaps_sent  INTEGER NOT NULL DEFAULT 0,
+    flap_t      REAL,                    -- wall time the last flap comment was queued
+    closed_for  REAL                     -- incidents.closed whose close is queued; NULL = open
+);
+"""
+
+
+def connect_state(path):
+    conn = connect(path)
+    conn.executescript(STATE_SCHEMA)
+    conn.commit()
+    return conn
+
+
+def _down(e):
+    """The tracker is unreachable or failing: stop the whole replay and keep the order."""
+    return e.status is None or e.status >= 500 or e.status == 429
+
+
+def _never_reached(e):
+    """The call certainly did not change the tracker."""
+    return e.refused or (e.status is not None and 400 <= e.status < 500)
+
+
+def _secs(d):
+    return ("%.1f" % float(d)).rstrip("0").rstrip(".")
+
+
 class Mirror:
-    def __init__(self, conn, fj, label_ids, journal, search_wait=SEARCH_WAIT_S,
+    """Plans tracker operations into the outbox (DB only), then replays it in order."""
+
+    def __init__(self, conn, fj, label_ids, state, search_wait=SEARCH_WAIT_S,
                  search_step=SEARCH_STEP_S, sleep=time.sleep, clock=time.monotonic,
-                 log=print):
+                 wall=time.time, log=print):
         self.conn = conn
         self.fj = fj
         self.label_ids = label_ids
-        self.journal = journal
+        self.state = state
         self.search_wait = search_wait
         self.search_step = search_step
         self.sleep = sleep
         self.clock = clock
+        self.wall = wall
         self.log = log
 
-    def _store(self, row, number):
+    # -- state ------------------------------------------------------------
+    def _issue(self, key):
+        return self.state.execute("SELECT * FROM issues WHERE key=?", (key,)).fetchone()
+
+    def _enqueue(self, key, op, title=None, body=None, label_id=None):
+        self.state.execute("INSERT INTO outbox (key, op, title, body, label_id, created) "
+                           "VALUES (?, ?, ?, ?, ?, ?)", (key, op, title, body, label_id,
+                                                          self.wall()))
+
+    def pending(self):
+        return [dict(r) for r in self.state.execute(
+            "SELECT * FROM outbox WHERE done IS NULL ORDER BY id").fetchall()]
+
+    def _store_bench(self, key, incident_id, run_id, number):
+        """Write the number into every routing row of this key and into the incident."""
         ticket = str(number)
-        self.conn.execute("UPDATE routing SET ticket=? WHERE id=? AND ticket IS NULL",
-                          (ticket, row["id"]))
-        if row["incident_id"] is not None:
+        if incident_id is not None:
+            self.conn.execute("UPDATE routing SET ticket=? WHERE incident_id=? AND ticket IS NULL",
+                              (ticket, incident_id))
             self.conn.execute("UPDATE incidents SET ticket=? WHERE id=? AND ticket IS NULL",
-                              (ticket, row["incident_id"]))
+                              (ticket, incident_id))
+        else:
+            self.conn.execute("UPDATE routing SET ticket=? WHERE run_id=? AND incident_id IS NULL "
+                              "AND ticket IS NULL", (ticket, run_id))
         self.conn.commit()
 
-    def _incident_ticket(self, iid):
-        if iid is None:
-            return None
-        r = self.conn.execute("SELECT ticket FROM incidents WHERE id=?", (iid,)).fetchone()
-        return r["ticket"] if r else None
+    # -- planning (no network) ---------------------------------------------
+    def plan(self):
+        """Queue creates for new routing rows and updates for mirrored incidents."""
+        linked = []
+        for row in self.conn.execute(ROWS).fetchall():
+            key, title, body = issue_text(row)
+            have = self._issue(key)
+            if have is not None:
+                if have["number"] is not None:  # a further routing row of a mirrored key
+                    self._store_bench(key, row["incident_id"], row["run_id"], have["number"])
+                    linked.append((key, "link", have["number"], "linked"))
+                    self.log("routing %d -> issue #%d (%s already mirrored)"
+                             % (row["id"], have["number"], key))
+                continue  # else its create is queued; the number lands in every row then
+            existing = None
+            if row["incident_id"] is not None:
+                r = self.conn.execute("SELECT ticket FROM incidents WHERE id=?",
+                                      (row["incident_id"],)).fetchone()
+                existing = r["ticket"] if r else None
+            if existing and str(existing).isdigit():
+                self.state.execute("INSERT INTO issues (key, incident_id, run_id, number) "
+                                   "VALUES (?, ?, ?, ?)", (key, row["incident_id"], row["run_id"],
+                                                           int(existing)))
+                self.state.commit()
+                self._store_bench(key, row["incident_id"], row["run_id"], int(existing))
+                linked.append((key, "link", int(existing), "linked"))
+                continue
+            label = ROUTE_LABEL.get(row["route"])
+            if label is None or label not in self.label_ids:
+                self.log("routing %d: no label for route %r; skipped" % (row["id"],
+                                                                        clean(row["route"])))
+                continue
+            self.state.execute("INSERT INTO issues (key, incident_id, run_id) VALUES (?, ?, ?)",
+                               (key, row["incident_id"], row["run_id"]))
+            self._enqueue(key, "create", title, body, self.label_ids[label])
+            self.state.commit()
+        now = self.wall()
+        for it in self.state.execute("SELECT * FROM issues WHERE incident_id IS NOT NULL "
+                                     "ORDER BY key").fetchall():
+            inc = self.conn.execute("SELECT state, closed, duration_s, flaps FROM incidents "
+                                    "WHERE id=?", (it["incident_id"],)).fetchone()
+            if inc is not None:
+                self._plan_updates(it, inc, now)
+        return linked
 
+    def _plan_updates(self, it, inc, now):
+        key, closed_for = it["key"], it["closed_for"]
+        flaps_sent, flap_t = it["flaps_sent"], it["flap_t"]
+        flaps = int(inc["flaps"] or 0)
+        resolved = inc["state"] == "RESOLVED"
+        if not resolved and closed_for is not None:
+            self._enqueue(key, "reopen")
+            closed_for = None
+        if flaps > flaps_sent and (flap_t is None or now - flap_t >= FLAP_COMMENT_S):
+            self._enqueue(key, "comment", body="Flapping: %d flaps (the same board and kind "
+                          "reopened within 60 s). State: %s." % (flaps, clean(inc["state"], 20)))
+            flaps_sent, flap_t = flaps, now
+        if resolved and inc["closed"] is not None and closed_for != inc["closed"]:
+            # A flapping incident may reopen within the flap window: close it after the window.
+            if flaps == 0 or now - inc["closed"] >= FLAP_COMMENT_S:
+                d = inc["duration_s"]
+                text = "Resolved after %s s." % (_secs(d) if d is not None else "unknown")
+                if flaps:
+                    text += " Flaps: %d." % flaps
+                    flaps_sent = max(flaps_sent, flaps)
+                self._enqueue(key, "comment", body=text)
+                self._enqueue(key, "close")
+                closed_for = inc["closed"]
+        if (closed_for, flaps_sent, flap_t) != (it["closed_for"], it["flaps_sent"], it["flap_t"]):
+            self.state.execute("UPDATE issues SET closed_for=?, flaps_sent=?, flap_t=? WHERE key=?",
+                               (closed_for, flaps_sent, flap_t, key))
+        self.state.commit()
+
+    # -- replay (network) ----------------------------------------------------
     def find_existing(self, key, title):
         """Exact title match via the lagging, fuzzy search, retried up to search_wait."""
         deadline = self.clock() + self.search_wait
@@ -191,44 +304,89 @@ class Mirror:
                 return None
             self.sleep(self.search_step)
 
-    def once(self):
-        """One pass. Returns [(routing id, issue number, how)]. Stops at the first tracker error."""
-        done = []
-        for row in self.conn.execute(ROWS).fetchall():
-            rid = row["id"]
-            existing = self._incident_ticket(row["incident_id"])
-            if existing:
-                self._store(row, existing)
-                done.append((rid, existing, "linked"))
-                self.log("routing %d -> issue #%s (incident already mirrored)" % (rid, existing))
+    def _mark(self, op, **cols):
+        sets = ", ".join("%s=?" % k for k in cols)
+        self.state.execute("UPDATE outbox SET %s WHERE id=?" % sets,
+                           list(cols.values()) + [op["id"]])
+        self.state.commit()
+
+    def _send(self, op, call):
+        """Mark sent, call, and forget the mark when the call certainly changed nothing."""
+        self._mark(op, sent=self.wall(), attempts=op["attempts"] + 1)
+        try:
+            return call()
+        except TrackerError as e:
+            if _never_reached(e):
+                self._mark(op, sent=None)
+            raise
+
+    def _create(self, op, it):
+        how = "created"
+        number = None
+        if it["incident_id"] is not None:  # stored in the bench DB before a crash?
+            r = self.conn.execute("SELECT ticket FROM incidents WHERE id=?",
+                                  (it["incident_id"],)).fetchone()
+            if r and r["ticket"] and str(r["ticket"]).isdigit():
+                number, how = int(r["ticket"]), "found"
+        if number is None and op["sent"] is not None:  # sent before; reply never stored
+            number = self.find_existing(op["key"], op["title"])
+            how = "found"
+        if number is None:
+            how = "created"
+            number = self._send(op, lambda: self.fj.create_issue(op["title"], op["body"],
+                                                                 [op["label_id"]]))
+        self._store_bench(op["key"], it["incident_id"], it["run_id"], number)
+        self.state.execute("UPDATE issues SET number=? WHERE key=?", (number, op["key"]))
+        self._mark(op, done=self.wall(), how=how, last_error=None)
+        return number, how
+
+    def _update(self, op, number):
+        if op["op"] == "comment":
+            body = "%s\n\n(lab watch update %d)" % (op["body"], op["id"])
+            if op["sent"] is not None and body in self.fj.comments(number):
+                return "found"
+            self._send(op, lambda: self.fj.comment(number, body))
+        elif op["op"] == "close":
+            self._send(op, lambda: self.fj.close(number))
+        else:
+            self._send(op, lambda: self.fj.reopen(number))
+        return "sent"
+
+    def replay(self):
+        """Send queued operations in order. Stops while the tracker is down."""
+        done, blocked = [], set()
+        for op in self.pending():
+            key = op["key"]
+            if key in blocked:
                 continue
-            label = ROUTE_LABEL.get(row["route"])
-            if label is None or label not in self.label_ids:
-                self.log("routing %d: no label for route %r; skipped" % (rid, clean(row["route"])))
-                continue
-            key, title, body = issue_text(row)
+            it = self._issue(key)
             try:
-                if rid in self.journal:
-                    number = self.find_existing(key, title)
-                    if number is not None:
-                        self._store(row, number)
-                        self.journal.discard(rid)
-                        done.append((rid, number, "found"))
-                        self.log("routing %d -> issue #%d (found after restart)" % (rid, number))
+                if op["op"] == "create":
+                    number, how = self._create(op, it)
+                else:
+                    number = it["number"] if it else None
+                    if number is None:
+                        blocked.add(key)  # its create is not done yet
                         continue
-                self.journal.add(rid)
-                number = self.fj.create_issue(title, body, [self.label_ids[label]])
+                    how = self._update(op, number)
+                    self._mark(op, done=self.wall(), how=how, last_error=None)
             except TrackerError as e:
-                if e.refused or (e.status is not None and 400 <= e.status < 500):
-                    self.journal.discard(rid)  # never reached, or refused: nothing created
-                self.log("routing %d: tracker error: %s; retry next pass" % (rid, e))
-                break
-            self._store(row, number)
-            self.journal.discard(rid)
-            done.append((rid, number, "created"))
-            self.log("routing %d -> issue #%d (created)" % (rid, number))
+                self._mark(op, last_error=clean(e, 120))
+                if _down(e):
+                    self.log("tracker down (%s); %d queued, replay next pass"
+                             % (e, len(self.pending())))
+                    break
+                blocked.add(key)
+                self.log("%s %s: tracker refused (%s); kept, retry next pass" % (key, op["op"], e))
+                continue
+            done.append((key, op["op"], number, how))
+            self.log("%s %s -> issue #%d (%s)" % (key, op["op"], number, how))
         return done
 
+    def once(self):
+        """Plan, then replay. Returns [(key, op, issue number, how)]."""
+        linked = self.plan()
+        return linked + self.replay()
 
 def load_labels(path):
     with open(path, encoding="utf-8") as f:
@@ -242,16 +400,17 @@ def main(argv=None):
     ap.add_argument("--secrets-dir", default=secrets_dir())
     ap.add_argument("--repo", default=DEFAULT_REPO)
     ap.add_argument("--state", default=os.environ.get("LW_TRACKER_STATE"),
-                    help="journal path (default: tracker_pending.json next to the DB)")
+                    help="state DB path (default: tracker_state.db next to the DB)")
     ap.add_argument("--interval", type=float, default=2.0)
     ap.add_argument("--once", action="store_true")
     args = ap.parse_args(argv)
     state = args.state or os.path.join(os.path.dirname(os.path.abspath(args.db)),
-                                       "tracker_pending.json")
+                                       "tracker_state.db")
     labels = load_labels(os.path.join(args.secrets_dir, "tracker_labels.json"))
     fj = Forgejo(os.path.join(args.secrets_dir, "tracker_token"), repo=args.repo)
     conn = connect(args.db)
-    m = Mirror(conn, fj, labels, Journal(state), log=lambda s: print(s, flush=True))
+    sconn = connect_state(state)
+    m = Mirror(conn, fj, labels, sconn, log=lambda s: print(s, flush=True))
     try:
         while True:
             try:
@@ -265,6 +424,7 @@ def main(argv=None):
         return 0
     finally:
         conn.close()
+        sconn.close()
 
 
 if __name__ == "__main__":

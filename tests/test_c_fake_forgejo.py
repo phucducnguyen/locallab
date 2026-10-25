@@ -30,6 +30,8 @@ class FakeForgejo:
         self.calls = []        # (method, path, auth scheme ok)
         self.fail_next = []    # HTTP codes to answer the next calls with
         self.drop_reply_once = False  # create the issue, then close without a reply
+        self.drop_comment_reply_once = False  # post the comment, then close without a reply
+        self.on_create = None  # called after an issue is stored, before the reply
         if with_repo:
             self.repos["bench-1"] = {"labels": [], "issues": []}
         self.srv = ThreadingHTTPServer(("127.0.0.1", 0), self._handler())
@@ -126,6 +128,8 @@ class FakeForgejo:
                                  "comments": [], "created": time.monotonic()}
                         repo["issues"].append(issue)
                         drop, fake.drop_reply_once = fake.drop_reply_once, False
+                    if fake.on_create is not None:
+                        fake.on_create(issue)
                     if drop:
                         self.close_connection = True
                         return None
@@ -141,7 +145,14 @@ class FakeForgejo:
                         issue = repo["issues"][n - 1]
                         if m2.group(2) and method == "POST":
                             issue["comments"].append(self._body()["body"])
+                            drop, fake.drop_comment_reply_once = \
+                                fake.drop_comment_reply_once, False
+                            if drop:
+                                self.close_connection = True
+                                return None
                             return self._send(201, {"body": issue["comments"][-1]})
+                        if m2.group(2) and method == "GET":
+                            return self._send(200, [{"body": c} for c in issue["comments"]])
                         if not m2.group(2) and method == "PATCH":
                             b = self._body()
                             if "state" in b:

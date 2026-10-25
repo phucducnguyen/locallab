@@ -6,7 +6,8 @@
 # Before the first run, place the admin password (one line) in
 #   ~/.config/labwatch/tracker_admin_password   (chmod 600)
 #
-# Never pulls an image: the image must already be loaded (offline install).
+# An existing lw-tracker container (for example the offline installer's) is
+# reused as it is, never recreated. Never pulls an image: the image must already be loaded (offline install).
 # Binds the tracker to 127.0.0.1:3000 only. Writes the setup and bench tokens
 # straight to chmod 600 files and never prints them. Idempotent: a second run
 # changes nothing.
@@ -67,20 +68,49 @@ done
 curl -fsS --max-time 2 "$BASE/api/v1/version" >/dev/null 2>&1 || die "no answer from $BASE/api/v1/version after 60 s"
 say "api: $(curl -fsS --max-time 2 "$BASE/api/v1/version")"
 
-# 4. The admin user.
-ADMINS="$(docker exec "$NAME" forgejo admin user list --admin 2>/dev/null | awk 'NR>1 {print $2}')" \
-    || die "could not list users in $NAME"
-if printf '%s\n' "$ADMINS" | grep -qx "$ADMIN"; then
-    say "user $ADMIN: exists"
-else
-    [ -s "$PASSFILE" ] || die "place the admin password in $PASSFILE (chmod 600) first"
-    docker exec "$NAME" forgejo admin user create --admin --username "$ADMIN" \
-        --password "$(head -n1 "$PASSFILE")" --email lw@example.invalid \
-        --must-change-password=false >/dev/null
-    say "user $ADMIN: created"
+# 4. Tokens already placed (for example copied from the offline installer's
+#    files): leave the user and the tokens alone; only repo and labels follow.
+LEGACY_SETUP="$HOME/.lw-tracker-setup-token"
+LEGACY_BENCH="$HOME/.lw-tracker-token"
+HAVE_TOKENS=no
+if [ -s "$SECRETS/tracker_setup_token" ] && [ -s "$SECRETS/tracker_token" ]; then
+    HAVE_TOKENS=yes
+    say "tokens: $SECRETS/tracker_setup_token and tracker_token exist; user and tokens left as they are"
+elif [ -e "$LEGACY_SETUP" ] || [ -e "$LEGACY_BENCH" ]; then
+    # The offline installer set this tracker up already. Do not mint a second
+    # set of tokens next to its own; ask Patrick to place its files (not read here).
+    die "the offline installer's token files exist ($LEGACY_SETUP, $LEGACY_BENCH) but $SECRETS/tracker_setup_token and $SECRETS/tracker_token do not. Place them yourself, then rerun:
+  install -m 600 $LEGACY_SETUP $SECRETS/tracker_setup_token
+  install -m 600 $LEGACY_BENCH $SECRETS/tracker_token"
 fi
 
-# 5. Tokens: generated once, written straight to a chmod 600 file, never printed.
+# 5. The admin user. The password never appears in a host argv: the user is
+#    created with a random password (its output discarded), then the real one
+#    is fed on stdin and read inside the container.
+if [ "$HAVE_TOKENS" = no ]; then
+    ADMINS="$(docker exec "$NAME" forgejo admin user list --admin 2>/dev/null | awk 'NR>1 {print $2}')" \
+        || die "could not list users in $NAME"
+    if printf '%s\n' "$ADMINS" | grep -qx "$ADMIN"; then
+        say "user $ADMIN: exists"
+    else
+        [ -s "$PASSFILE" ] || die "place the admin password in $PASSFILE (chmod 600) first"
+        docker exec "$NAME" forgejo admin user create --admin --username "$ADMIN" \
+            --random-password --email lw@example.invalid --must-change-password=false \
+            >/dev/null 2>&1 || die "could not create user $ADMIN"
+        # Inside the container the password is only in the forgejo process's
+        # argv while it runs (the CLI has no stdin option).
+        head -n1 -- "$PASSFILE" | docker exec -i "$NAME" sh -c '
+            IFS= read -r p || exit 1
+            forgejo admin user change-password --username "$1" --password "$p" \
+                --must-change-password=false >/dev/null 2>&1 \
+            || forgejo admin user change-password --username "$1" --password "$p" \
+                >/dev/null 2>&1' sh "$ADMIN" \
+            || die "user $ADMIN created, but setting its password failed (rerun, or set it in the container by hand)"
+        say "user $ADMIN: created, password set from $PASSFILE"
+    fi
+fi
+
+# 6. Tokens: generated once, written straight to a chmod 600 file, never printed.
 make_token() {  # name scopes file
     local tname="$1" scopes="$2" file="$3" tmp
     if [ -s "$file" ]; then
@@ -99,10 +129,12 @@ make_token() {  # name scopes file
     mv -f -- "$tmp" "$file"
     say "token $tname: written to $file"
 }
-make_token setup write:user,write:repository,write:issue "$SECRETS/tracker_setup_token"
-make_token bench write:issue "$SECRETS/tracker_token"
+if [ "$HAVE_TOKENS" = no ]; then
+    make_token setup write:user,write:repository,write:issue "$SECRETS/tracker_setup_token"
+    make_token bench write:issue "$SECRETS/tracker_token"
+fi
 
-# 6. Repo bench-1, labels, label ids (with the setup token).
+# 7. Repo bench-1, labels, label ids (with the setup token).
 cd "$REPO_ROOT"
 LW_TRACKER="$BASE" LW_SECRETS_DIR="$SECRETS" python3 -m tracker.setup_api --secrets-dir "$SECRETS"
 say "done"

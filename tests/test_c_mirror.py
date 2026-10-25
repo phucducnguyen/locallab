@@ -52,7 +52,7 @@ class Base(unittest.TestCase):
                                 base=self.fake.base)
         self.bench_fj = Forgejo(os.path.join(self.secrets, "tracker_token"), base=self.fake.base)
         self.db = os.path.join(d, "bench.db")
-        self.journal_path = os.path.join(d, "tracker_pending.json")
+        self.state_path = os.path.join(d, "tracker_state.db")
         self.logs = []
 
     def tearDown(self):
@@ -62,12 +62,26 @@ class Base(unittest.TestCase):
     def do_setup(self):
         return setup_api.setup(self.setup_fj, self.labels_path, log=lambda s: None)
 
-    def mirror(self, fj=None, wait=3.0, step=0.1):
+    def mirror(self, fj=None, wait=3.0, step=0.1, wall=time.time):
         conn = mirror.connect(self.db)
         self.addCleanup(conn.close)
+        state = mirror.connect_state(self.state_path)
+        self.addCleanup(state.close)
         return mirror.Mirror(conn, fj or self.bench_fj, mirror.load_labels(self.labels_path),
-                             mirror.Journal(self.journal_path), search_wait=wait,
-                             search_step=step, log=self.logs.append)
+                             state, search_wait=wait, search_step=step, wall=wall,
+                             log=self.logs.append)
+
+    def outbox(self, pending_only=False):
+        conn = mirror.connect_state(self.state_path)
+        try:
+            sql = "SELECT * FROM outbox" + (" WHERE done IS NULL" if pending_only else "")
+            return [dict(r) for r in conn.execute(sql + " ORDER BY id").fetchall()]
+        finally:
+            conn.close()
+
+    @staticmethod
+    def creates(done):
+        return [d for d in done if d[1] == "create"]
 
     def rows(self, sql, *args):
         conn = mirror.connect(self.db)
@@ -161,8 +175,8 @@ class MirrorStubDbTest(Base):
         self.do_setup()
 
     def test_one_issue_per_routing_row_with_number_stored(self):
-        done = self.mirror().once()
-        self.assertEqual([d[2] for d in done], ["created"] * 3)
+        done = self.creates(self.mirror().once())
+        self.assertEqual([d[3] for d in done], ["created"] * 3)
         issues = {i["number"]: i for i in self.fake.issues()}
         self.assertEqual(len(issues), 3)
         for r in self.rows("SELECT r.id, r.ticket, r.incident_id, i.ticket AS iticket, i.board, "
@@ -195,7 +209,9 @@ class MirrorStubDbTest(Base):
 
     def test_second_pass_and_restart_create_nothing(self):
         self.mirror().once()
+        n_calls = len(self.fake.calls)
         self.assertEqual(self.mirror().once(), [])
+        self.assertEqual(self.fake.calls[n_calls:], [])
         self.assertEqual(len(self.fake.issues()), 3)
 
     def test_live_jumper_from_emit(self):
@@ -204,7 +220,7 @@ class MirrorStubDbTest(Base):
                               "jumper", "--speed", "0"], cwd=ROOT, capture_output=True,
                              text=True, check=True)
         iid = int(out.stdout.strip())
-        done = self.mirror().once()
+        done = self.creates(self.mirror().once())
         self.assertEqual(len(done), 1)
         issue = self.fake.issues()[-1]
         self.assertTrue(issue["title"].startswith("[lw-%d] nucleo-1 HEALTH_FAIL: HARDWARE"
@@ -219,7 +235,7 @@ class MirrorStubDbTest(Base):
         Writer(conn).route(time.time(), "CODE", "again", incident_id=3, run_id=2)
         conn.close()
         done = self.mirror().once()
-        self.assertEqual([d[2] for d in done], ["linked"])
+        self.assertEqual([d[1:] for d in done], [("link", 3, "linked")])
         self.assertEqual(len(self.fake.issues()), 3)
 
     def test_run_only_routing_row(self):
@@ -236,36 +252,39 @@ class MirrorStubDbTest(Base):
         self.assertEqual(done, [])
         self.assertEqual(len(self.fake.issues()), 1)
         self.assertEqual(self.rows("SELECT ticket FROM routing WHERE id=1")[0]["ticket"], None)
-        with open(self.journal_path) as f:
-            self.assertEqual(json.load(f)["pending"], [1])
+        head = self.outbox(pending_only=True)[0]
+        self.assertEqual((head["key"], head["op"]), ("lw-1", "create"))
+        self.assertIsNotNone(head["sent"])
         # Restart at once: search lags, the mirror waits and finds the exact title.
-        done = self.mirror().once()
-        self.assertEqual(done[0][:3], (1, 1, "found"))
+        done = self.creates(self.mirror().once())
+        self.assertEqual(done[0], ("lw-1", "create", 1, "found"))
         self.assertEqual(len(self.fake.issues()), 3)
-        with open(self.journal_path) as f:
-            self.assertEqual(json.load(f)["pending"], [])
+        self.assertEqual(self.outbox(pending_only=True), [])
 
     def test_pending_without_issue_ignores_fuzzy_hits_then_creates(self):
         # A row whose title only fuzzily matches must not be taken for ours.
         self.bench_fj.create_issue("[lw-12] nucleo-1 HEALTH_FAIL: HARDWARE", "lw-1", [1])
         time.sleep(self.lag + 0.1)
-        mirror.Journal(self.journal_path).add(1)
-        done = self.mirror(wait=0.4).once()
-        self.assertEqual(done[0][2], "created")
+        m = self.mirror(wait=0.4)
+        m.plan()
+        m.state.execute("UPDATE outbox SET sent=1 WHERE key='lw-1' AND op='create'")
+        m.state.commit()
+        done = self.creates(m.replay())
+        self.assertEqual(done[0][1:], ("create", 2, "created"))
         self.assertEqual(len(self.fake.issues()), 4)
 
     def test_tracker_down_queues_then_creates(self):
         down = Forgejo(os.path.join(self.secrets, "tracker_token"),
                        base="http://127.0.0.1:%d" % _free_port(), timeout=1)
         self.assertEqual(self.mirror(fj=down).once(), [])
-        self.assertEqual(mirror.Journal(self.journal_path).ids, set())
-        self.assertEqual(len(self.mirror().once()), 3)
+        self.assertTrue(all(o["sent"] is None for o in self.outbox()))
+        self.assertEqual(len(self.creates(self.mirror().once())), 3)
 
     def test_server_error_keeps_row_pending(self):
         self.fake.fail_next = [500]
         self.assertEqual(self.mirror(wait=0.3).once(), [])
-        self.assertEqual(mirror.Journal(self.journal_path).ids, {1})
-        self.assertEqual(len(self.mirror(wait=0.3).once()), 3)
+        self.assertIsNotNone(self.outbox(pending_only=True)[0]["sent"])  # outcome unknown
+        self.assertEqual(len(self.creates(self.mirror(wait=0.3).once())), 3)
         self.assertEqual(len(self.fake.issues()), 3)
 
     def test_cli_once(self):
@@ -276,7 +295,7 @@ class MirrorStubDbTest(Base):
         self.assertEqual(out.returncode, 0, out.stderr)
         self.assertEqual(out.stdout.count("(created)"), 3)
         self.assertNotIn(BENCH_TOKEN, out.stdout + out.stderr)
-        self.assertTrue(os.path.exists(os.path.join(self.tmp.name, "tracker_pending.json")))
+        self.assertTrue(os.path.exists(os.path.join(self.tmp.name, "tracker_state.db")))
 
 
 class IssueTextTest(unittest.TestCase):
@@ -306,6 +325,14 @@ class ScriptTest(unittest.TestCase):
         self.assertIn("--pull never", text)
         self.assertIn("-p 127.0.0.1:3000:3000", text)
         self.assertIn("16.0.6-rootless", text)
+
+    def test_setup_script_keeps_password_out_of_host_argv(self):
+        with open(os.path.join(ROOT, "tracker", "setup_forgejo.sh")) as f:
+            text = f.read()
+        self.assertIn("--random-password", text)
+        self.assertNotIn('--password "$(', text)
+        self.assertIn('docker exec -i "$NAME" sh -c', text)  # password read inside, from stdin
+        self.assertIn(".lw-tracker-token", text)  # the offline installer's setup is detected
 
 
 if __name__ == "__main__":
