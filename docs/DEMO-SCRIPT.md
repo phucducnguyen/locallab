@@ -8,12 +8,23 @@ Patrick says. Commands run in the GB10 console. Numbers come only from today's s
 
 | Pane | What it shows |
 | --- | --- |
+| Dashboard | Firefox full screen on the GB10 monitor, http://127.0.0.1:8770/: the board drawing, a plain headline, the incident timeline |
 | GB10 console | tmux session `lw-demo`: bench log on top, a free shell below |
-| Raw serial | the bench's own console lines (the bench owns the port; nothing else opens it) |
-| Telegram | group HackathonGB10SF, on the laptop |
+| Telegram | group HackathonGB10SF, on the laptop: short alerts, then the board photo, then the 🧠 explanation |
 | Tracker | http://127.0.0.1:3000/labwatch/bench-1/issues, in a browser on the GB10 |
 | Timer | a stopwatch from fault to first alert, next to Telegram |
-| Camera | phone on the board's CN8 header and the A0-A1 jumper |
+| Camera | phone on the board's CN8 header and the blue button |
+
+## Wiring (CN8 and the button)
+
+| Part | Pins | Pulled reads |
+| --- | --- | --- |
+| Test wire | A0-A1 | loopback OPEN |
+| Sensor wire | A2-A3 | sensor OPEN |
+| Radio wire | A4-A5 | radio OPEN |
+| Stop button | blue B1, held | estop ON (an operator action, not a fault) |
+
+Never ground A0, A2 or A4; ground A1, A3 or A5 only with that pair pulled.
 
 Never say "production". If anything lags past 15 s, play that beat's backup clip and say out loud
 that it is a recording.
@@ -22,7 +33,8 @@ that it is a recording.
 
 ### Beat 1: the story (0:00-0:20, 20 s)
 
-- **On screen:** Telegram and the tracker, both quiet. Board in camera, `loopback=OK`.
+- **On screen:** the dashboard all green with its plain headline; Telegram and the tracker quiet.
+  Board in camera.
 - **Say:** "{{PATRICK_STORY_ONE_LINE}} Lab Watch answers the first question for you: hardware or
   code, and who to call."
 - **Type:** nothing.
@@ -30,28 +42,31 @@ that it is a recording.
 
 ### Beat 2: pull the jumper (0:20-1:05, 45 s)
 
-- **On screen:** camera on the jumper, raw serial, Telegram, timer.
-- **Do:** pull the A0-A1 jumper and start the timer. Never ground A0.
-- **Say, while it lands:** "Serial says loopback OPEN. The bench decides with a fixed rule, not
-  the model: this check passed on this same firmware, so it's hardware." When the alert lands,
-  stop the timer: "First alert in {{THIS_PULL_S}} seconds, routed to the Hardware team." Point at
-  the explanation as it follows: "Every sentence cites a serial line, and it ends with a DIAGNOSIS
-  line." Show the new issue labelled hardware.
-- **Do:** put the jumper back. "Recovered after N seconds" posts; the issue closes.
-- **Type:** nothing.
-- **Fallback:** at 15 s with no Telegram post, stay on raw serial and narrate the bench's verdict,
-  then play clip 2.
+- **On screen:** camera on the A2-A3 sensor wire, the dashboard, Telegram, timer.
+- **Do:** pull the A2-A3 sensor wire and start the timer.
+- **Say, while it lands:** "The dashboard turns the sensor wire red. The bench decides with a
+  fixed rule, not the model: this check passed on this same firmware, so it's hardware." When the
+  alert lands, stop the timer and read it: "Board 1: the sensor wire came loose. Team: hardware.
+  First alert in {{THIS_PULL_S}} seconds." The board photo follows as a reply, then the 🧠
+  explanation: "It ends with a DIAGNOSIS line, and every claim behind it cites a serial line."
+  Show the new issue labelled hardware.
+- **Live moment:** type `/ask <n>` in the group with the incident number from the alert. "Anyone
+  on the team can ask the local agent. Host code does every action; the model only answers."
+- **Do:** put the wire back. "✅ the sensor wire is back. Fixed after N seconds." posts; the issue
+  closes.
+- **Fallback:** at 15 s with no Telegram post, stay on the dashboard and narrate the bench's
+  verdict, then play clip 2. If `/ask` takes past 60 s, move on and come back to it.
 
 ### Beat 3: a HardFault commit (1:05-1:55, 50 s)
 
-- **On screen:** the shell pane of `lw-demo`, then raw serial, Telegram, tracker.
+- **On screen:** the shell pane of `lw-demo`, then the dashboard, Telegram, tracker.
 - **Type:**
   ```bash
   git -C ~/bench-fw fetch -q ~/fw bug/hardfault && git -C ~/bench-fw cherry-pick FETCH_HEAD
   ```
 - **Say:** "A teammate lands a commit. The bench flashes it, waits for the board to confirm the
-  new sha, three self-tests pass, and then it crashes." When the alert lands: "Code, routed to
-  Firmware, with the file and line from the crash registers." Show the issue labelled firmware:
+  new sha, three self-tests pass, and then it crashes." When the alert lands: "Board 1: the new
+  code made it crash. Team: firmware, with the file and line in Details." Show the issue labelled firmware:
   "The ticket has the sha and the line, never the source." Point at the explanation naming the
   commit and its `src/` line.
 - **Type, right after the beat:**
@@ -91,23 +106,23 @@ That leaves about 20 s of slack inside the 3 minutes.
 ## The 5-minute additions, in order
 
 1. **The full story (+45 s).** Before beat 2: {{PATRICK_STORY_FULL}}.
-2. **A fault the judge picks (+45 s).** After beat 3. Offer: jumper out, the RESET button, the USB
-   cable pulled for 20 s. Say what the bench should conclude before it does. Grounding A1 is
-   allowed only with the jumper out.
+2. **A fault the judge picks (+45 s).** After beat 3. Offer: any of the three wires out, the blue
+   stop button held ("someone pressed the stop button. Not a fault."), the RESET button, the USB
+   cable pulled for 20 s. Say what the bench should conclude before it does. Grounding A1, A3 or A5
+   is allowed only with that wire out.
 3. **The trial table (+30 s).** After beat 5's number: the per-trial table from lane D's log,
    rule and agent side by side, "can't tell" counted separately and never as right.
 
-If it works by 15:00, any one of these can replace addition 2: the agent's proposed fix opened as
-a pull request on Forgejo for a human to merge, the full-screen red/green status view, or an
-emulated QEMU board.
+Any one of these can replace addition 2: the agent's proposed fix opened as a pull request on
+Forgejo for a human to merge, `/status` in the group, or the QEMU fleet of eight emulated boards.
 
 ## 16:30 checklist: record the backup clips
 
 One clip per beat, recorded on the real setup, each a little shorter than its beat.
 
 - [ ] Clip 1: board and quiet Telegram while Patrick says the story line (20 s).
-- [ ] Clip 2: jumper pull with timer, first alert, explanation, hardware issue, jumper back,
-      issue closed (45 s).
+- [ ] Clip 2: sensor wire pull with timer, dashboard red, first alert, board photo, 🧠
+      explanation, `/ask` answer, hardware issue, wire back, issue closed (45 s).
 - [ ] Clip 3: the cherry-pick, verified flash, three passes, HardFault, firmware issue with
       `file:line`, then the reset (50 s).
 - [ ] Clip 4: `nvidia-smi` and the `policy_denied` refusal (25 s).
@@ -118,9 +133,12 @@ One clip per beat, recorded on the real setup, each a little shorter than its be
 
 - [ ] GPU explanation simulator paused (it must not compete with the live explanation).
 - [ ] Laptop SSH relay up (model tunnel and Telegram relay in one ssh).
-- [ ] tmux sessions running: sender, bench, mirror, and `lw-demo` for the console.
-- [ ] Board: `LW RESULT PASS` and HEALTH with `loopback=OK`; jumper seated.
+- [ ] tmux sessions running: sender, bench, mirror, commands, snapshot, dashboard, and `lw-demo`
+      for the console.
+- [ ] Firefox full screen on http://127.0.0.1:8770/, headline green.
+- [ ] Board: `LW RESULT PASS`, HEALTH with loopback, sensor and radio OK, estop OFF; all three
+      wires seated.
 - [ ] `~/bench-fw` main has no HardFault commit left from a rehearsal.
-- [ ] Telegram test message reaches HackathonGB10SF.
+- [ ] Telegram test message reaches HackathonGB10SF; `/help` answers in the group.
 - [ ] Tracker open on the issues page; no open issues left from rehearsal.
 - [ ] Timer at zero; phone camera on CN8; backup clips queued.
