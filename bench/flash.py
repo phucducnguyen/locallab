@@ -286,6 +286,19 @@ class Drive:
         self.log("flash: %s: %s" % (" ".join(cmd), "ok" if rc == 0 else printable(out, 100)))
         return rc == 0
 
+    def release(self):
+        """Unmount every mount of the NUCLEO drive (live or stale); errors are ignored."""
+        if self.fixed:
+            return
+        want = set(self.devices().values())
+        points = set()
+        for dev, mp, _ in read_mounts(self.proc_mounts):
+            real = os.path.realpath(dev) if dev.startswith("/") else dev
+            if real in want or os.path.basename(mp) in self.labels:
+                points.add(mp)
+        for mp in sorted(points):
+            self._cmd(["umount", mp])
+
     def locate(self):
         """(mount point, None) or (None, the FLASH_ERROR message)."""
         self.tried = []
@@ -426,6 +439,11 @@ class FlashJob:
             return ("BUILD_ERROR", b["why"])
         self.log("flash: built %s (%s), elf %s" % (b["sha"], b["subject"], b["elf"]))
         self.call(self.bench.begin_flash, b["sha"], b["subject"], b["elf"])
+        # The drive re-enumerates after every flash; a mount kept across that holds a
+        # stale FAT view (the kernel then sets it read-only). Always mount fresh.
+        release = getattr(self.drive, "release", None)
+        if release:
+            release()
         mp, why = self.drive.locate()
         if mp is None:
             self.log("flash: FLASH_ERROR %s" % why)
@@ -433,6 +451,8 @@ class FlashJob:
             return ("FLASH_ERROR", why)
         ok, msg, warn = copy_bin(b["bin"], mp, opener=self.opener, sync=self.sync)
         t_copied = time.time()
+        if release:
+            release()
         self.log("flash: %s" % msg)
         if not ok:
             self.call(self.bench.flash_failed, msg)
