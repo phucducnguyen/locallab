@@ -56,43 +56,43 @@ main { display: grid; grid-template-columns: minmax(0, 56fr) minmax(0, 44fr); ga
 .row.warn .w b { color: var(--warn); }
 .row.unknown .w b { color: var(--unk); }
 #aipanel { display: grid; grid-template-columns: minmax(0, 40fr) minmax(0, 32fr) minmax(0, 28fr);
-  gap: 0; margin: 0 48px 10px; border: 4px solid var(--ai); border-radius: 18px;
-  background: var(--aibg); height: 300px; overflow: hidden; }
+  gap: 0; margin: 0 48px 8px; border: 3px solid var(--ai); border-radius: 14px;
+  background: var(--aibg); height: 205px; overflow: hidden; }
 #aipanel.nocite { grid-template-columns: minmax(0, 60fr) minmax(0, 40fr); }
 #aipanel.nocite #aicite { display: none; }
-#aipanel > div { padding: 16px 26px; min-width: 0; overflow: hidden; }
+#aipanel > div { padding: 10px 20px; min-width: 0; overflow: hidden; }
 #aipanel > div + div { border-left: 2px solid #3b2d5c; }
-.aih { font-size: 24px; font-weight: 800; color: var(--ai); letter-spacing: .04em;
-  text-transform: uppercase; margin-bottom: 8px; }
-#aititle { font-size: 32px; font-weight: 800; color: var(--ai); line-height: 1.2; }
-#aibody { font-size: 30px; line-height: 1.25; margin-top: 10px; color: var(--text);
+.aih { font-size: 17px; font-weight: 800; color: var(--ai); letter-spacing: .04em;
+  text-transform: uppercase; margin-bottom: 5px; }
+#aititle { font-size: 24px; font-weight: 800; color: var(--ai); line-height: 1.2; }
+#aibody { font-size: 21px; line-height: 1.25; margin-top: 6px; color: var(--text);
   overflow: hidden; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; }
-#aibody .timer { font-size: 56px; font-weight: 800; color: var(--text);
+#aibody .timer { font-size: 38px; font-weight: 800; color: var(--text);
   font-variant-numeric: tabular-nums; }
-#aibody .dim { color: var(--dim); font-size: 28px; }
-#cites .dim { color: var(--dim); font-size: 22px; }
-#ailive { font-size: 28px; margin-top: 10px; color: #d6c9f5; white-space: nowrap;
+#aibody .dim { color: var(--dim); font-size: 19px; }
+#cites .dim { color: var(--dim); font-size: 15px; }
+#ailive { font-size: 19px; margin-top: 6px; color: #d6c9f5; white-space: nowrap;
   overflow: hidden; text-overflow: ellipsis; font-variant-numeric: tabular-nums; }
 #ailive b { color: var(--ai); }
-.rv { font-size: 30px; line-height: 1.2; margin-bottom: 4px; overflow: hidden;
+.rv { font-size: 21px; line-height: 1.2; margin-bottom: 4px; overflow: hidden;
   display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; }
 .rv i { font-style: normal; color: var(--dim); }
-#rvverdict { display: inline-block; margin-top: 10px; font-size: 32px; font-weight: 800;
-  padding: 4px 20px; border-radius: 10px; border: 3px solid var(--unk); color: var(--unk); }
+#rvverdict { display: inline-block; margin-top: 6px; font-size: 22px; font-weight: 800;
+  padding: 2px 14px; border-radius: 8px; border: 2px solid var(--unk); color: var(--unk); }
 #rvverdict.agrees { color: var(--ok); border-color: var(--ok); background: #0c2716; }
 #rvverdict.differs { color: var(--warn); border-color: var(--warn); background: #33250a; }
 #rvverdict:empty { display: none; }
-#rvnote { font-size: 24px; color: var(--dim); margin-top: 10px; }
+#rvnote { font-size: 16px; color: var(--dim); margin-top: 6px; }
 #cites { margin: 0; padding: 0; list-style: none; }
-#cites li { font-size: 24px; line-height: 1.25; margin-bottom: 8px; overflow: hidden;
+#cites li { font-size: 17px; line-height: 1.25; margin-bottom: 5px; overflow: hidden;
   display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; }
 #cites li b { color: var(--ai); }
 #cites li span { color: #c3cbd3; }
 #aiask { display: none; margin-top: 6px; }
 #aiask.on { display: block; }
-#askq { font-size: 26px; font-weight: 700; overflow: hidden; display: -webkit-box;
+#askq { font-size: 18px; font-weight: 700; overflow: hidden; display: -webkit-box;
   -webkit-box-orient: vertical; -webkit-line-clamp: 2; }
-#aska { font-size: 24px; color: #d6c9f5; margin-top: 4px; overflow: hidden; display: -webkit-box;
+#aska { font-size: 17px; color: #d6c9f5; margin-top: 4px; overflow: hidden; display: -webkit-box;
   -webkit-box-orient: vertical; -webkit-line-clamp: 3; }
 #aipanel.nocite.ask { grid-template-columns: minmax(0, 40fr) minmax(0, 32fr) minmax(0, 28fr); }
 #aipanel.nocite.ask #aicite { display: block; }
