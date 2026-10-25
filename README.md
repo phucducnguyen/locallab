@@ -6,8 +6,9 @@ the Dell x NVIDIA AI hackathon on an NVIDIA GB10.
 
 - **The bench decides, the model explains.** A fixed rule (Python, `bench/`) judges every failure on
   the verified firmware sha as HARDWARE, CODE, UNKNOWN or NONE, and sends the first Telegram alert
-  itself through a SQLite outbox, typically under 2 s after the first bad serial line.
-- **All inference runs on the GB10.** Qwen3.6-35B-A3B (NVFP4) on vLLM, called by an OpenClaw agent
+  itself through a SQLite outbox. Measured today on the real board: 0.78-2.03 s after the first bad
+  serial line.
+- **All inference runs on the GB10.** nvidia/Qwen3.6-35B-A3B-NVFP4 on vLLM, called by an OpenClaw agent
   inside a NemoClaw / OpenShell sandbox whose network policy allows only the bench's read-only API and
   the local model (github.com is refused by the policy). Every claim in an explanation cites a serial
   line, a register bit, a `file:line` or a diff line, and ends with one `DIAGNOSIS:` line.
@@ -37,24 +38,28 @@ Three jumper wires on CN8 stand in for devices: A0-A1 loopback, A2-A3 sensor, A4
 | --- | --- |
 | `bench/` | serial owner, parser, incidents and triage, flash and verify, outbox sender, endpoint, watcher, status view, dashboard |
 | `agent/` | the sandbox skill and client, `agent.explain`, network policy, explanation simulator |
-| `tracker/` | Forgejo setup, issue mirror, `agent.fix` (proposes a patch, proves it on the board, opens a PR) |
+| `tracker/` | Forgejo setup, issue mirror, and the optional fix beat (`tracker/fix.py`, run as `python3 -m agent.fix`; not run live today) |
 | `fleet/` | QEMU emulated boards next to the real one |
 | `stub/` | a stand-in endpoint with invented records, used by every lane's tests |
 | `docs/` | the day contract, schema, write-up, demo script |
 
 ## Run (on the GB10)
 
-    python3 -m bench.run --board nucleo-1 --flash <sha>      # owns the serial port
+    python3 -m bench.run --board nucleo-1 --watch --flash a0f0c9f   # owns the serial port
     LW_TG_API=https://api.telegram.org:8443 python3 -m bench.sender
     LW_HOST=172.18.0.1 python3 -m bench.endpoint             # the sandbox's read-only API
     python3 -m tracker.mirror
     python3 -m bench.status_view
     python3 -m bench.dashboard                               # http://127.0.0.1:8770/
     LW_TG_API=https://api.telegram.org:8443 python3 -m bench.commands
-    LW_TG_API=https://api.telegram.org:8443 python3 -m bench.snapshot
+    TMPDIR=$HOME/snap/firefox/common/lw-tmp LW_TG_API=https://api.telegram.org:8443 python3 -m bench.snapshot
     python3 -m unittest discover -s tests -t .               # tests need no board or network
 
-Paths and settings are in `docs/01-day-contract.md`.
+`a0f0c9f` is the baseline firmware. With `--watch`, any new head of `~/bench-fw` main is flashed
+and tested automatically. `TMPDIR` is needed on the GB10 because Firefox is a snap there. `bench.run` and `bench.commands` also
+need `LW_AGENT_CONFIG=$HOME/lw/agent/agent.gb10.json` for explanations and `/ask`. Paths and
+settings are in [the day contract](docs/01-day-contract.md); the demo is in
+[the demo script](docs/DEMO-SCRIPT.md) and the write-up in [WRITEUP.md](docs/WRITEUP.md).
 
 ## Disclosure
 

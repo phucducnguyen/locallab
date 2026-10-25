@@ -47,7 +47,7 @@ that it is a recording.
 - **Say, while it lands:** "The dashboard turns the sensor wire red. The bench decides with a
   fixed rule, not the model: this check passed on this same firmware, so it's hardware." When the
   alert lands, stop the timer and read it: "Board 1: the sensor wire came loose. Team: hardware.
-  First alert in {{THIS_PULL_S}} seconds." The board photo follows as a reply, then the 🧠
+  Not a code problem. First alert in {{THIS_PULL_S}} seconds." The board photo follows as a reply, then the 🧠
   explanation: "It ends with a DIAGNOSIS line, and every claim behind it cites a serial line."
   Show the new issue labelled hardware.
 - **Live moment:** type `/ask <n>` in the group with the incident number from the alert. "Anyone
@@ -62,17 +62,18 @@ that it is a recording.
 - **On screen:** the shell pane of `lw-demo`, then the dashboard, Telegram, tracker.
 - **Type:**
   ```bash
-  git -C ~/bench-fw fetch -q ~/fw refs/remotes/origin/bug/hardfault && git -C ~/bench-fw cherry-pick FETCH_HEAD
+  git -C ~/bench-fw fetch -q ~/fw refs/remotes/origin/bug/hardfault && git -C ~/bench-fw -c user.name="Lab Watch bench" -c user.email=lw@example.invalid cherry-pick FETCH_HEAD
   ```
-- **Say:** "A teammate lands a commit. The bench flashes it, waits for the board to confirm the
+- **Say:** "A teammate lands a commit. The bench's watcher flashes it, waits for the board to confirm the
   new sha, three self-tests pass, and then it crashes." When the alert lands: "Board 1: the new
   code made it crash. Team: firmware, with the file and line in Details." Show the issue labelled firmware:
   "The ticket has the sha and the line, never the source." Point at the explanation naming the
-  commit and its `src/` line.
+  commit and the line (in today's rehearsal: `src/cmd.c:35`).
 - **Type, right after the beat:**
   ```bash
-  git -C ~/bench-fw reset --hard HEAD~1
+  git -C ~/bench-fw reset --hard a0f0c9f
   ```
+  The watcher flashes the baseline a0f0c9f back by itself.
 - **Fallback:** if the flash or the alert stalls past 15 s, play clip 3 and reset `~/bench-fw` as
   above.
 
@@ -82,8 +83,10 @@ that it is a recording.
 - **Type:**
   ```bash
   nvidia-smi
-  nemoclaw labwatch exec -- curl -sS -m 5 https://github.com
+  export PATH=$HOME/.local/bin:$PATH NEMOCLAW_GATEWAY_PORT=8090
+  nemoclaw labwatch exec -- curl -sS -m 5 http://github.com/
   ```
+  Expected: `{"detail":"GET github.com:80/ not permitted by policy","error":"policy_denied"}`.
 - **Say:** "The model runs here, on the GB10. The agent lives in a sandbox that can reach only the
   bench and the model; here is the policy refusing GitHub in its own words. It can read and ask for
   a rerun; it can never flash, edit, merge or close."
@@ -98,7 +101,7 @@ that it is a recording.
   first alert was {{MEDIAN_FAULT_TO_ALERT_S}} s." Then: "The test firmware is our own open-source
   repo, published before today. We prototyped the idea last week; none of that code is here. This
   repo started empty this morning, and every line in it was written today."
-- **Type:** `git -C ~/lw-day log --oneline | tail -5` (TO CONFIRM the repo path on the GB10).
+- **Type:** `git -C ~/lw log --oneline | tail -5` (the repo is `~/lw` on the GB10).
 - **Fallback:** read the sentence from the slide.
 
 That leaves about 20 s of slack inside the 3 minutes.
@@ -110,11 +113,13 @@ That leaves about 20 s of slack inside the 3 minutes.
    stop button held ("someone pressed the stop button. Not a fault."), the RESET button, the USB
    cable pulled for 20 s. Say what the bench should conclude before it does. Grounding A1, A3 or A5
    is allowed only with that wire out.
-3. **The trial table (+30 s).** After beat 5's number: the per-trial table from lane D's log,
+3. **The trial table (+30 s).** After beat 5's number: the per-trial table (`python3 -m bench.trial_log --since <unix time> --header`),
    rule and agent side by side, "can't tell" counted separately and never as right.
 
-Any one of these can replace addition 2: the agent's proposed fix opened as a pull request on
-Forgejo for a human to merge, `/status` in the group, or the QEMU fleet of eight emulated boards.
+Any one of these can replace addition 2: `/status` in the group, or the QEMU fleet of eight
+emulated boards. The fix beat (`python3 -m agent.fix --incident <n>`: the agent proposes a patch,
+the host proves it on the board and opens a pull request) exists but was not run live today; use
+it only after a rehearsal, and say it is optional.
 
 ## 16:30 checklist: record the backup clips
 
@@ -133,12 +138,14 @@ One clip per beat, recorded on the real setup, each a little shorter than its be
 
 - [ ] GPU explanation simulator paused (it must not compete with the live explanation).
 - [ ] Laptop SSH relay up (model tunnel and Telegram relay in one ssh).
-- [ ] tmux sessions running: sender, bench, mirror, commands, snapshot, dashboard, and `lw-demo`
-      for the console.
+- [ ] tmux sessions running (`tmux ls`): lw-bench, lw-sender, lw-endpoint, lw-mirror,
+      lw-fwd8000, lw-fwd8000b, lw-dash, lw-commands, lw-snapshot, and lw-demo for the console.
+      `~/lw-tools/reset.sh <tag>` (a GB10 script outside this repo) restarts them all with a fresh
+      DB and cleared issues; use it only before the demo.
 - [ ] Firefox full screen on http://127.0.0.1:8770/, headline green.
 - [ ] Board: `LW RESULT PASS`, HEALTH with loopback, sensor and radio OK, estop OFF; all three
       wires seated.
-- [ ] `~/bench-fw` main has no HardFault commit left from a rehearsal.
+- [ ] `~/bench-fw` main is at a0f0c9f, with no HardFault commit left from a rehearsal.
 - [ ] Telegram test message reaches HackathonGB10SF; `/help` answers in the group.
 - [ ] Tracker open on the issues page; no open issues left from rehearsal.
 - [ ] Timer at zero; phone camera on CN8; backup clips queued.

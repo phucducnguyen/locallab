@@ -27,9 +27,13 @@ The blue button B1 is an emergency stop: an operator action, not a fault. The fi
 its supply voltage, so a sagging supply or a brown-out reset opens a power incident.
 
 **Plain alerts, a photo, and a chat.** The bench writes every Telegram message itself in two short
-lines of everyday English, for example "Board 1: the sensor wire came loose. Team: hardware. Not a
-code problem." A second later it replies with a photo of the board drawing from the dashboard,
-then with the model's condensed explanation. Anyone in the team group can type `/ask 5` to ask the
+lines of everyday English, for example:
+
+    🔴 Board 1: the sensor wire came loose. (#5)
+    Team: hardware. Not a code problem. Ask: /ask 5
+
+A few seconds later it replies with a photo of the board drawing from the dashboard, then with the
+model's condensed explanation. Anyone in the team group can type `/ask 5` to ask the
 local agent about incident 5, or `/status`, `/test` and `/rerun`; host code performs every action,
 and the model only answers questions.
 
@@ -40,8 +44,9 @@ issue, and the issue closes when the board recovers.
 **A dashboard on the GB10 screen.** A full-screen page draws the board, its wires and button in
 green or red, with a plain headline and a timeline of the current incident.
 
-**A proposed fix.** For a code fault the agent drafts a patch; the host proves it on the board and
-opens a pull request for a human to merge.
+**A proposed fix (optional, not run live).** `python3 -m agent.fix --incident <n>` asks the agent
+for a patch to a code fault; the host proves it on the board and opens a pull request for a human to
+merge. The code and its tests exist, but we did not run this beat live today.
 
 ## Architecture
 
@@ -79,8 +84,10 @@ the agent says it can't tell and names the one check that would.
 
 On {{N_TRIALS}} trials today, the rule was right on {{RULE_RIGHT}} and the agent on {{AGENT_RIGHT}}; the agent said it couldn't tell on {{CANT_TELL}}; the median time from fault to first alert was {{MEDIAN_FAULT_TO_ALERT_S}} s. The agent's skill and prompt were frozen at main ebada0f before any scored trial.
 
-Measured today on the real board, the first alert reached Telegram 1.9-2.0 s after the first bad
-serial line, and the explanation followed about 20-28 s later from the local model.
+Measured today on the real board, the first alert reached Telegram 0.78-2.03 s after the first
+bad serial line: 0.78 s for the stop button, 1.97-2.03 s for a pulled wire, 1.07 s for the HardFault.
+The local model's explanation took 18-46 s. In the HardFault beat the bench found `src/cmd.c:35`, and
+the explanation named the commit.
 
 **Fleet.** Eight emulated boards in QEMU ran next to the real one through the bench's own serial
 code for a 10-minute soak: 0 anomalies, at about 1.35 CPU cores per board.
@@ -109,9 +116,11 @@ On the GB10, from the repo root (Python 3.12, standard library plus pyserial):
 ```bash
 python3 -m unittest discover -s tests -t .      # every test, no board needed
 tracker/setup_forgejo.sh                        # Forgejo at 127.0.0.1:3000, tokens to files
-python3 -m bench.run --expect-flash <sha>       # serial owner, incidents, triage, outbox
+python3 -m bench.run --watch --flash a0f0c9f    # serial owner, incidents, triage, outbox
 python3 -m bench.sender                         # outbox to Telegram (LW_TG_API = the relay)
 python3 -m tracker.mirror                       # routing rows to Forgejo issues
+LW_HOST=172.18.0.1 python3 -m bench.endpoint    # the sandbox's read-only API, port 8765
+python3 -m bench.dashboard                      # http://127.0.0.1:8770/
 python3 -m bench.tail --raw                     # board check only, while bench.run is stopped
 python3 -m agent.explain --incident <id>        # one explanation, ends with DIAGNOSIS
 ```
