@@ -35,7 +35,8 @@ BOARD_ROWS = (("loopback", "loopback (A0-A1)"), ("sensor", "sensor (A2-A3)"),
 
 KIND_WORDS = {"HEALTH_FAIL": "loopback check failing", "SILENT": "board silent",
               "LINK_DOWN": "serial link down", "REBOOT": "unexpected reboot",
-              "HARDFAULT": "HardFault", "RUN_FAIL": "run failed"}
+              "HARDFAULT": "HardFault", "RUN_FAIL": "run failed",
+              "ESTOP": "emergency stop pressed"}
 
 ANSI = {"ok": "\x1b[32m", "bad": "\x1b[31m", "banner": "\x1b[1;97;41m",
         "head_ok": "\x1b[1;30;42m", "head_bad": "\x1b[1;97;41m", "title": "\x1b[1m",
