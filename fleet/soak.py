@@ -42,6 +42,7 @@ class BoardSoak:
         self.lw_lines = 0
         self.nonlw = 0
         self.nonlw_steady = 0
+        self.nonlw_pending = 0  # non-LW lines after HEALTH, judged by the next record
         self.bad_bytes = 0
         self.malformed = 0
         self.boot = 0
@@ -77,12 +78,17 @@ class BoardSoak:
             if ev.nonlw:
                 self.nonlw += 1
                 if self.seen_health:
-                    self.nonlw_steady += 1
+                    self.nonlw_pending += 1
             return
         self.lw_lines += 1
         if self.first_line_t is None:
             self.first_line_t = ev.t_mono
         self._gap(ev.t_mono)
+        if self.nonlw_pending:
+            # free text right before a BOOT is the boot banner, not noise
+            if ev.records[0]["kind"] != "BOOT":
+                self.nonlw_steady += self.nonlw_pending
+            self.nonlw_pending = 0
         for r in ev.records:
             k = r["kind"]
             self.by_kind[k] = self.by_kind.get(k, 0) + 1
@@ -137,8 +143,9 @@ class BoardSoak:
             anomalies.append("unreadable bytes %d" % self.bad_bytes)
         if self.malformed:
             anomalies.append("malformed LW %d" % self.malformed)
-        if self.nonlw_steady:
-            anomalies.append("non-LW lines after HEALTH %d" % self.nonlw_steady)
+        steady = self.nonlw_steady + self.nonlw_pending
+        if steady:
+            anomalies.append("non-LW lines after HEALTH %d" % steady)
         if self.health_bad:
             anomalies.append("HEALTH not OK %d" % self.health_bad)
         if self.fails:

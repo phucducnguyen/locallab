@@ -22,7 +22,7 @@ TESTS = ("crc32", "ringbuf", "systick", "cmd_dispatch", "loopback")
 
 
 def boot_lines(fw, reset):
-    out = ["LW BOOT fw=%s reset=%s csr=0x0c000000" % (fw, reset), "SIM build (fake)"]
+    out = ["", "fake firmware (SIM build)", "LW BOOT fw=%s reset=%s csr=0x0c000000" % (fw, reset)]
     out += ["LW TEST %s PASS" % t for t in TESTS]
     out.append("LW RESULT PASS")
     return out
@@ -90,7 +90,7 @@ def main(argv):
                         break
                     data += chunk
                 if b"system_reset" in data:
-                    pending = boot_lines(fw, "SFT")
+                    pending = boot_lines(fw, "NONE")  # QEMU has no RCC_CSR model
                     n = 0
                 c.sendall(b"\r\n(qemu) ")
             except OSError:

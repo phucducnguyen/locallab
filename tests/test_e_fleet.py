@@ -246,6 +246,16 @@ class CountTest(unittest.TestCase):
                      "HEALTH not OK 1", "HARDFAULT", "counter went back 1", "link down 1"):
             self.assertIn(want, a)
 
+    def test_banner_after_health_is_boot_text(self):
+        s = soak.BoardSoak("emu-4", 0.0, 0.0)
+        s.on_event(ev(t=0.1, recs=rec("LW HEALTH 7 loopback=OK")))
+        s.on_event(ev(t=0.2, nonlw=True))  # banner of a reset
+        s.on_event(ev(t=0.2, recs=rec("LW BOOT fw=abc1234 reset=NONE csr=0x00000000")))
+        s.on_event(ev(t=0.3, recs=rec("LW ALIVE 1LW HEALTH 1 loopback=OK")))
+        out = s.summary(1.0)
+        self.assertEqual(out["anomalies"], [])
+        self.assertEqual(out["nonlw_lines"], 1)
+
     def test_silent_board(self):
         out = soak.BoardSoak("emu-3", 0.0, 0.0, expect_boot=True).summary(4.0)
         self.assertTrue(out["gaps"][0]["open"])
