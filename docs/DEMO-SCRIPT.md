@@ -62,7 +62,7 @@ that it is a recording.
 - **On screen:** the shell pane of `lw-demo`, then the dashboard, Telegram, tracker.
 - **Type:**
   ```bash
-  git -C ~/bench-fw fetch -q ~/fw bug/hardfault && git -C ~/bench-fw cherry-pick FETCH_HEAD
+  git -C ~/bench-fw fetch -q ~/fw refs/remotes/origin/bug/hardfault && git -C ~/bench-fw cherry-pick FETCH_HEAD
   ```
 - **Say:** "A teammate lands a commit. The bench flashes it, waits for the board to confirm the
   new sha, three self-tests pass, and then it crashes." When the alert lands: "Board 1: the new
