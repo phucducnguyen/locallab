@@ -98,6 +98,14 @@ class Forgejo:
     def close(self, number):
         self._call("PATCH", "%s/%d" % (self._issues(), int(number)), {"state": "closed"})
 
+    def reopen(self, number):
+        self._call("PATCH", "%s/%d" % (self._issues(), int(number)), {"state": "open"})
+
+    def comments(self, number):
+        """The issue's comments (bodies only), to check an ambiguous earlier post."""
+        r = self._call("GET", "%s/%d/comments" % (self._issues(), int(number)))
+        return [c.get("body", "") for c in r if isinstance(c, dict)] if isinstance(r, list) else []
+
     def search(self, q=None, labels=None):
         """Fuzzy and lagging (see the spec): never a dedupe key on its own."""
         query = {"state": "all", "type": "issues"}
