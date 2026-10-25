@@ -187,6 +187,10 @@ class Machine:
         self.recent[inc.kind] = inc
         if inc.state != "RESOLVED":
             self.active[inc.kind] = inc
+            if inc.kind == LINK_DOWN:
+                # killed while the port was gone: the next link_up resolves it
+                self.link = False
+                self.down_since = inc.facts.get("down_since") or inc.t_first_bad
 
     def expect_flash(self, t, sha, window=FLASH_WINDOW_S):
         """The bench flashed sha (by hand until stage A3). Pause and discard until its BOOT."""
