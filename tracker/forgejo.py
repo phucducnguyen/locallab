@@ -161,13 +161,15 @@ class Forgejo:
     def git_url(self):
         return "%s/%s.git" % (self.base, self.repo)
 
-    def push(self, local_repo, refspecs, timeout=PUSH_TIMEOUT):
+    def push(self, local_repo, refspecs, timeout=PUSH_TIMEOUT, dry_run=False):
         """git push local_repo's refspecs to self.repo over HTTP, never forced.
 
         The token goes to git only as an http.extraHeader set through the
         GIT_CONFIG_* environment of the git process: never in the URL, never
         in an argv. Basic auth (owner:token), which Forgejo's git HTTP side
-        accepts for tokens. Raises TrackerError without git's output text.
+        accepts for tokens. Raises TrackerError without git's output text;
+        its .rejected is True when the remote refused a non-fast-forward.
+        dry_run still authenticates to receive-pack but writes nothing.
         """
         owner = self.repo.split("/", 1)[0]
         cred = base64.b64encode(("%s:%s" % (owner, _read_token(self.token_file)))
@@ -179,8 +181,8 @@ class Forgejo:
                     "GIT_CONFIG_COUNT": "1", "GIT_CONFIG_KEY_0": "http.extraHeader",
                     "GIT_CONFIG_VALUE_0": "Authorization: Basic " + cred})
         argv = ["git", "-C", local_repo, "-c", "credential.helper=", "-c",
-                "http.followRedirects=false", "push", "--quiet", "--porcelain",
-                self.git_url()] + list(refspecs)
+                "http.followRedirects=false", "push", "--quiet", "--porcelain"] + \
+            (["--dry-run"] if dry_run else []) + [self.git_url()] + list(refspecs)
         if any(r.startswith("+") for r in refspecs):
             raise TrackerError("push: forced refspecs are not allowed")
         try:
@@ -193,10 +195,13 @@ class Forgejo:
         if p.returncode != 0:
             err = (p.stderr or b"").decode("utf-8", "replace")
             status = 403 if "403" in err else 401 if "401" in err else None
-            hint = ("rejected (not a fast-forward)" if "rejected" in err or "[rejected]" in
-                    (p.stdout or b"").decode("utf-8", "replace") else "git exit %d" % p.returncode)
-            raise TrackerError("push to %s -> %s" % (self.repo, hint if status is None
-                                                     else "HTTP %d" % status), status)
+            rejected = status is None and ("rejected" in err or "[rejected]" in
+                                           (p.stdout or b"").decode("utf-8", "replace"))
+            hint = "rejected (not a fast-forward)" if rejected else "git exit %d" % p.returncode
+            e = TrackerError("push to %s -> %s" % (self.repo, hint if status is None
+                                                   else "HTTP %d" % status), status)
+            e.rejected = rejected
+            raise e
 
     def labels(self):
         r = self._call("GET", "/repos/%s/labels" % self.repo)

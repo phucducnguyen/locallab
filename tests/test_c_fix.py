@@ -252,6 +252,9 @@ class World:
 
     def fixer(self, verifier=None, max_lines=fix.DEFAULT_MAX_LINES):
         cfg = fix.load_fix_config(self.config)
+        for c in (getattr(self, "db", None), getattr(self, "state", None)):
+            if c is not None:
+                c.close()
         self.db = fix.connect(self.db_path)
         self.state = fix.connect_fix_state(self.state_path)
         self.logs = []
@@ -592,9 +595,24 @@ class ScopeTest(Base):
             self.bench.create_pull("t", "b", "main", "main")
         self.assertEqual(cm.exception.status, 403)
         out = []
-        fix.probe_scope(self.w.fake.base, self.w.secrets, "labwatch/bench-fw", out=out.append)
-        self.assertIn("refused", out[0])
+        fix.probe_scope(self.w.fake.base, self.w.secrets, "labwatch/bench-fw", self.w.bare,
+                        out=out.append)
+        self.assertIn("push refused (HTTP 403); PR create refused (HTTP 403)", out[0])
         self.assertIn("tracker_setup_token", out[0])
+
+    def test_probe_writes_nothing_and_sees_a_scoped_token(self):
+        self.setup.ensure_repo()
+        self.setup.push(self.w.bare, ["refs/heads/main:refs/heads/main"])
+        sdir = os.path.join(self.w.tmp, "scoped")
+        os.makedirs(sdir)
+        with open(os.path.join(sdir, "tracker_token"), "w") as f:
+            f.write(SETUP_TOKEN + "\n")  # a token that has repository scope
+        out = []
+        self.assertEqual(fix.probe_scope(self.w.fake.base, sdir, "labwatch/bench-fw",
+                                         self.w.bare, out=out.append), 0)
+        self.assertIn("push allowed; PR create allowed (HTTP 404", out[0])
+        self.assertEqual(self.w.remote("for-each-ref", "--format=%(refname)"), "refs/heads/main")
+        self.assertEqual(self.w.fake.pulls(), [])
 
     def test_push_token_never_in_argv_only_in_git_env(self):
         self.setup.ensure_repo()
@@ -624,6 +642,37 @@ class ScopeTest(Base):
             self.setup.push(self.w.bare, ["%s:refs/heads/main" % self.w.good])
         self.assertIn("not a fast-forward", str(cm.exception))
         self.assertEqual(self.w.remote("rev-parse", "refs/heads/main"), self.w.bad)
+
+
+def advance_remote_main(w):
+    """A human merged a fix: the code repo's main gets a commit bench main does not have."""
+    work = os.path.join(w.tmp, "merge-work")
+    subprocess.run(["git", "clone", "--quiet", w.fake.bare("bench-fw"), work], check=True)
+    with open(os.path.join(work, "README"), "a") as f:
+        f.write("merged elsewhere\n")
+    run(work, "-c", "user.name=Human", "-c", "user.email=h@example.invalid", "commit",
+        "--quiet", "-am", "merged change")
+    run(work, "push", "--quiet", "origin", "HEAD:refs/heads/main")
+    return run(work, "rev-parse", "HEAD")
+
+
+class RemoteMainAheadTest(Base):
+    def test_setup_and_fix_still_work_after_a_merge(self):
+        from tracker import setup_api
+        env = {"LW_TRACKER": self.w.fake.base}
+        with mock.patch.dict(os.environ, env), mock.patch("sys.stdout", io.StringIO()):
+            self.assertEqual(setup_api.main(["--secrets-dir", self.w.secrets,
+                                             "--fw-repo", self.w.bare]), 0)
+        ahead = advance_remote_main(self.w)
+        out = io.StringIO()
+        with mock.patch.dict(os.environ, env), mock.patch("sys.stdout", out):
+            self.assertEqual(setup_api.main(["--secrets-dir", self.w.secrets,
+                                             "--fw-repo", self.w.bare]), 0)
+        self.assertIn("ahead", out.getvalue())
+        self.w.set_reply(reply(GOOD_DIFF))
+        self.assertEqual(self.run_fix(), fix.EXIT_OK)
+        self.assertEqual(len(self.w.fake.pulls()), 1)
+        self.assertEqual(self.w.remote("rev-parse", "refs/heads/main"), ahead)
 
 
 class SetupCodeRepoTest(Base):

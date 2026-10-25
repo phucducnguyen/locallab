@@ -663,8 +663,13 @@ class Fixer:
             "A human reviews and merges this. Lab Watch never merges."])
         try:
             self.fj.ensure_repo()
-            self.fj.push(clone, ["%s:refs/heads/main" % main_sha,
-                                 "%s:refs/heads/%s" % (fix_sha, branch)])
+            try:  # keep the remote main up with bench main; merged fixes may put it ahead
+                self.fj.push(clone, ["%s:refs/heads/main" % main_sha])
+            except TrackerError as e:
+                if not getattr(e, "rejected", False):
+                    raise
+                self.log("fix: remote main is ahead of bench main (merged fixes); left as is")
+            self.fj.push(clone, ["%s:refs/heads/%s" % (fix_sha, branch)])
             number, url = self.fj.create_pull(title, body, branch, "main")
         except TrackerError as e:
             self._row(fid, status="push_failed", reason=clean(e))
@@ -717,24 +722,42 @@ def load_fix_config(path=None):
     return cfg
 
 
-def probe_scope(base, sdir, code_repo, out=print):
-    """Read-only: may the bench token list the code repo's pulls? (Pulls need repository scope.)"""
+def probe_scope(base, sdir, code_repo, fw_repo=DEFAULT_FW_REPO, out=print):
+    """Can the bench token push to / open PRs on the code repo? Writes nothing.
+
+    Push: a --dry-run push of bench main to a throwaway ref (receive-pack
+    authenticates, nothing is written). PR: a POST /pulls whose head branch does
+    not exist (403 = no scope; 404/422 = scope present, and no PR is created).
+    """
     fj = Forgejo(os.path.join(sdir, "tracker_token"), base=base, repo=code_repo)
+    rc, verdict = 0, []
     try:
-        fj.pulls()
-        out("bench token: may read pulls of %s (repository scope present)" % code_repo)
-        return 0
+        repo = check_bench_repo(fw_repo)
+        fj.push(repo, ["refs/heads/main:refs/heads/lw-probe-%s" % uuid.uuid4().hex[:8]],
+                dry_run=True)
+        verdict.append("push allowed")
+    except FixError as e:
+        out("probe: %s" % e)
+        return 1
+    except TrackerError as e:
+        verdict.append("push refused (%s)" % ("HTTP %d" % e.status if e.status else e))
+        rc = rc if e.status in (401, 403) else 1
+    try:
+        fj.create_pull("lw probe", "probe", "lw-probe-no-such-branch-%s" % uuid.uuid4().hex[:8])
+        verdict.append("PR create allowed (a probe PR was opened; close it)")
     except TrackerError as e:
         if e.status in (401, 403):
-            out("bench token: refused on %s pulls (HTTP %d): it cannot push or open PRs; "
-                "agent.fix uses tracker_setup_token for the push and the PR only"
-                % (code_repo, e.status))
-            return 0
-        if e.status == 404:
-            out("probe: %s does not exist yet; run tracker/setup_forgejo.sh first" % code_repo)
-            return 1
-        out("probe failed: %s" % e)
-        return 1
+            verdict.append("PR create refused (HTTP %d)" % e.status)
+        elif e.status in (404, 409, 422):
+            verdict.append("PR create allowed (HTTP %d for the missing branch)" % e.status)
+        else:
+            verdict.append("PR probe failed (%s)" % e)
+            rc = 1
+    refused = all("refused" in v for v in verdict)
+    out("bench token on %s: %s -> %s" % (code_repo, "; ".join(verdict),
+        "agent.fix uses tracker_setup_token for the push and the PR only" if refused else
+        "the bench token has repository scope"))
+    return rc
 
 
 def main(argv=None, prog="python3 -m tracker.fix"):
@@ -752,7 +775,7 @@ def main(argv=None, prog="python3 -m tracker.fix"):
     ap.add_argument("--hold", default=os.environ.get("LW_HOLD", DEFAULT_HOLD))
     args = ap.parse_args(argv)
     if args.probe_scope:
-        return probe_scope(None, args.secrets_dir, args.repo)
+        return probe_scope(None, args.secrets_dir, args.repo, args.fw_repo)
     if not re.fullmatch(r"[0-9]{1,9}", args.incident):
         print("fix: the incident id must be a number", file=sys.stderr)
         return EXIT_NOT_ELIGIBLE

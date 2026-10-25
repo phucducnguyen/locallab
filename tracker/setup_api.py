@@ -8,7 +8,7 @@ labels hardware, firmware, needs-triage only when missing, reads the label ids
 back and writes DIR/tracker_labels.json only when its content changes. Then
 the code repo for the fix beat's pull requests (labwatch/bench-fw): created
 when missing, and the bench repo's main pushed to it (never forced; a remote
-main that is not an ancestor stops with an error). A second run changes
+main ahead of it, from merged fix PRs, is left as it is). A second run changes
 nothing. Never prints a token.
 """
 
@@ -77,8 +77,14 @@ def setup_code_repo(fj, fw_repo, log=print):
     except FixError as e:
         raise TrackerError(str(e)) from None
     log("repo %s: %s" % (fj.repo, "created" if fj.ensure_repo() else "exists"))
-    fj.push(repo, ["refs/heads/main:refs/heads/main"])
-    log("repo %s: main pushed from %s (fast-forward only)" % (fj.repo, repo))
+    try:
+        fj.push(repo, ["refs/heads/main:refs/heads/main"])
+        log("repo %s: main pushed from %s (fast-forward only)" % (fj.repo, repo))
+    except TrackerError as e:
+        if not getattr(e, "rejected", False):
+            raise
+        log("repo %s: remote main is ahead of %s main (merged fixes); left as is"
+            % (fj.repo, repo))
 
 
 def main(argv=None):
