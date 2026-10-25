@@ -225,7 +225,7 @@ class CommandsTest(unittest.TestCase):
 
     def test_ask_answer_condensed(self):
         lines = ["## Answer", "", "**The sensor is STUCK** since HEALTH 99 [event 40].",
-                 "- loopback `OK`"] + ["line %d [event %d]" % (i, i) for i in range(20)]
+                 "- loopback `OK` _cmd_dispatch_ HEALTH_FAIL"] + ["line %d [event %d]" % (i, i) for i in range(20)]
         cfg = self.agent("print(%r)\n" % "\n".join(lines))
         self.run_one("/ask why is the sensor   stuck?\x07", bot=self.bot(agent_config=cfg))
         text = self.replies()[0]
@@ -235,6 +235,7 @@ class CommandsTest(unittest.TestCase):
         self.assertEqual(out[1], "The sensor is STUCK since HEALTH 99 [event 40].")
         self.assertNotIn("*", text)
         self.assertNotIn("`", text)
+        self.assertEqual(out[2], "- loopback OK cmd_dispatch HEALTH_FAIL")
         with open(os.path.join(self.tmp.name, "argv")) as f:
             argv = json.load(f)
         self.assertTrue(argv[2].startswith("lw-ask-"))

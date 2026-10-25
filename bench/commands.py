@@ -73,7 +73,7 @@ HELP = "\n".join([
     "/help - this list",
 ])
 
-_MD_RE = re.compile(r"[*_`]+|^#+\s*|^>\s*")
+_MD_RE = re.compile(r"\*+|`+|(?<!\w)_+|_+(?!\w)|^#+\s*|^>\s*")
 _CMD_RE = re.compile(r"^/([A-Za-z_]+)(?:@\S+)?(?:\s+(.*))?$", re.S)
 
 
