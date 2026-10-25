@@ -389,10 +389,90 @@ def v_brownout(g):
     low = lines[-1]["line"].split("vdd=")[1].split()[0]
     reason = ("BOOT with reset=BOR that the bench did not cause, after vdd=%s, on %s, which "
               "passed; no reflash since." % (low, g.sha_pass))
-    ev = {"lines": lines[-2:] + [boot], "fields": {"reset": ["BOR"], "vdd": int(low)}}
-    iid = g.w.open_incident(clock.now(), "REBOOT", "HARDWARE", reason, ev, firmware=g.sha_pass,
+    ev = {"lines": lines[-2:] + [boot], "fields": {"reset": ["BOR"], "vdd": int(low)},
+          "device": "power", "power": {"vdd": int(low)}}
+    iid = g.w.open_incident(clock.now(), "HEALTH_FAIL", "HARDWARE", reason, ev,
+                            firmware=g.sha_pass, last_pass=g.last_pass(), t_first_bad=clock.now())
+    return "incident", iid, None, ("HARDWARE", "HEALTH_FAIL", None), "power"
+
+
+DEVICE_PINS = {"loopback": "A0-A1", "sensor": "A2-A3", "radio": "A4-A5", "estop": "B1"}
+
+
+def v2_health(g, clock, n, sensor="OK", radio="OK", estop="OFF", vdd=None):
+    """A firmware grammar v2 HEALTH line: every link, the estop and the supply."""
+    vdd = g.rng.randint(3240, 3340) if vdd is None else vdd
+    temp = g.rng.randint(24, 48)
+    line = ("LW HEALTH %d loopback=OK sensor=%s radio=%s estop=%s vdd=%d temp=%d"
+            % (n, sensor, radio, estop, vdd, temp))
+    return g.w.serial(clock.now(), line, "HEALTH", n=n, loopback="OK", sensor=sensor,
+                      radio=radio, estop=estop, vdd=vdd, temp=temp)
+
+
+def _device_link(g, dev):
+    g.pass_run()
+    clock = g.clock()
+    n = _health_n(g)
+    state = g.rng.choice(("OPEN", "STUCK"))
+    v2_health(g, clock, n)
+    lines = []
+    for k in (1, 2):
+        clock.wait(1.0)
+        lines.append(v2_health(g, clock, n + k, **{dev: state}))
+    vdd = int(lines[-1]["line"].split("vdd=")[1].split()[0])
+    reason = ("%s link %s (%s) on 2 lines in a row on %s, which passed with all links OK; "
+              "no reflash since." % (dev, state, DEVICE_PINS[dev], g.sha_pass))
+    ev = {"lines": lines, "device": dev, "pins": DEVICE_PINS[dev], "power": {"vdd": vdd},
+          "fields": {dev: state}}
+    iid = g.w.open_incident(clock.now(), "HEALTH_FAIL", "HARDWARE", reason, ev,
+                            firmware=g.sha_pass, last_pass=g.last_pass(), t_first_bad=clock.now())
+    return "incident", iid, None, ("HARDWARE", "HEALTH_FAIL", None), dev
+
+
+def v_sensor_link(g):
+    return _device_link(g, "sensor")
+
+
+def v_radio_link(g):
+    return _device_link(g, "radio")
+
+
+def v_estop(g):
+    g.pass_run()
+    clock = g.clock()
+    n = _health_n(g)
+    v2_health(g, clock, n)
+    clock.wait(1.0)
+    on = v2_health(g, clock, n + 1, estop="ON")
+    reason = ("emergency stop pressed on board %s (button B1): an operator action, not a "
+              "fault; it resolves when the button is released." % g.board)
+    ev = {"lines": [on], "device": "estop", "pins": "B1", "fields": {"estop": "ON"}}
+    iid = g.w.open_incident(clock.now(), "ESTOP", "HARDWARE", reason, ev, firmware=g.sha_pass,
                             last_pass=g.last_pass(), t_first_bad=clock.now())
-    return "incident", iid, None, ("HARDWARE", "REBOOT", None), "power"
+    if g.rng.random() < 0.4:
+        clock.wait(g.rng.uniform(3, 120))
+        v2_health(g, clock, n + 2, estop="OFF")
+        g.w.resolve(clock.now(), iid)
+    return "incident", iid, None, ("HARDWARE", "ESTOP", None), "operator"
+
+
+def v_power_low(g):
+    g.pass_run()
+    clock = g.clock()
+    n = _health_n(g)
+    v2_health(g, clock, n)
+    lines, vdds = [], []
+    for k in (1, 2):
+        clock.wait(1.0)
+        vdds.append(g.rng.randint(2620, 2990))
+        lines.append(v2_health(g, clock, n + k, vdd=vdds[-1]))
+    reason = ("Board %s power is low: vdd %d then %d mV on 2 lines in a row (below 3000 mV) "
+              "on verified sha %s." % (g.board, vdds[0], vdds[1], g.sha_pass))
+    ev = {"lines": lines, "device": "power", "power": {"vdd": vdds[-1]},
+          "fields": {"vdd": vdds}}
+    iid = g.w.open_incident(clock.now(), "HEALTH_FAIL", "HARDWARE", reason, ev,
+                            firmware=g.sha_pass, last_pass=g.last_pass(), t_first_bad=clock.now())
+    return "incident", iid, None, ("HARDWARE", "HEALTH_FAIL", None), "power"
 
 
 def _new_run_start(g):
@@ -544,7 +624,9 @@ def v_run_pass(g):
 
 
 VARIANTS = {"jumper": v_jumper, "recover": v_recover, "flap": v_flap, "stuck": v_stuck,
-            "link_down": v_link_down, "brownout": v_brownout, "reboot_pin": v_reboot_pin, "hardfault": v_hardfault,
+            "link_down": v_link_down, "brownout": v_brownout,
+            "sensor_link": v_sensor_link, "radio_link": v_radio_link, "estop": v_estop,
+            "power_low": v_power_low, "reboot_pin": v_reboot_pin, "hardfault": v_hardfault,
             "run_fail_code": v_run_fail_code, "loopback_unknown": v_loopback_unknown,
             "silent_unknown": v_silent_unknown, "silent_code": v_silent_code,
             "silent_hw": v_silent_hw, "run_unknown": v_run_unknown, "run_pass": v_run_pass}
