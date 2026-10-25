@@ -152,6 +152,8 @@ def first_sentence(text):
                 or line == "...":
             continue
         line = re.sub(r"^(EXPLANATION|SUMMARY|DIAGNOSIS)\s*:\s*", "", line, flags=re.I)
+        # The Telegram form starts "🧠 #<id>: "; the screen shows only the sentence.
+        line = re.sub(r"^\W*#\d+\s*:\s*", "", line)
         m = re.match(r"(.+?[.!?])(\s|$)", line)
         return clean(m.group(1) if m else line, 200)
     return None

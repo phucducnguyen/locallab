@@ -275,7 +275,9 @@ def frame(st, serial_lines, serial_note, width, height, now):
         sent = time.strftime("%H:%M:%S", time.gmtime(ls["sent"]))
         mid.append(("  [%s UTC, incident %s, %s]" % (sent, ls.get("incident_id"),
                                                      clean(ls.get("transition"), 20)), "dim"))
-        text_lines = [clean(x) for x in (ls.get("text") or "").splitlines() if x.strip()]
+        # Telegram lines start with an emoji, which the ASCII screen would show as "?".
+        text_lines = [clean(re.sub(r"^[^\x20-\x7e]+\s*", "", x))
+                      for x in (ls.get("text") or "").splitlines() if x.strip()]
         mid += [("  " + x, "plain") for x in text_lines[:8]]
         if len(text_lines) > 8:
             mid.append(("  ...", "dim"))
