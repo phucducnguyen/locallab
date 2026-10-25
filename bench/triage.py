@@ -68,6 +68,12 @@ def judge_incident(kind, facts, cites, sha, history, run=None):
     """
     facts = facts or {}
     first = cites[0]["line"] if cites and cites[0] else None
+    if kind == "ESTOP":
+        return judge_estop(facts)
+    if kind == "HEALTH_FAIL" and facts.get("device") == "power":
+        return judge_power(facts, sha)
+    if kind == "HEALTH_FAIL" and facts.get("device") in ("sensor", "radio"):
+        return judge_link(facts, sha, history)
     if kind == "HEALTH_FAIL":
         quoted = " then ".join(_q(c["line"]) for c in cites[:2] if c)
         if not sha:
@@ -123,6 +129,52 @@ def judge_incident(kind, facts, cites, sha, history, run=None):
         return judge_run(run.get("verdict") or facts.get("verdict", "FAIL"), run.get("tests", {}),
                          run.get("sha", sha), history, cites=cites)
     return ("UNKNOWN", "No rule covers incident kind %s." % kind)
+
+
+def link_what(facts):
+    """'sensor link OPEN (A2-A3 wire)' or 'radio link STUCK (A5 shorted to ground)'."""
+    dev = facts.get("device")
+    st = facts.get("state") or ((facts.get(dev) or ["OPEN"])[-1])
+    if st == "STUCK":
+        return "%s link STUCK (%s shorted to ground)" % (dev, facts.get("in_label") or "input")
+    return "%s link %s (%s wire)" % (dev, st, facts.get("pins") or "?")
+
+
+def judge_link(facts, sha, history):
+    """A sensor or radio link: HARDWARE on a sha that passed, else the loopback's rule."""
+    n = len(facts.get(facts.get("device")) or []) or 2
+    what = "%s on %d lines in a row" % (link_what(facts), n)
+    if not sha:
+        return _unverified(what)
+    if history.passed(sha) is not None:
+        return ("HARDWARE", "%s on %s, which passed with all links OK; no reflash since." % (
+            what[0].upper() + what[1:], sha))
+    return ("UNKNOWN", "Verified sha %s has no passing run yet and the failure (%s) is confined "
+            "to the links during its first run; confirm by reflashing the last passing sha%s." % (
+                sha, what, _last_txt(history, sha)))
+
+
+def power_what(facts):
+    if facts.get("cause") == "BOR":
+        return "a brown-out reset (reset=%s)" % ",".join(facts.get("reset") or ["BOR"])
+    vdd = facts.get("vdd") or []
+    return "vdd %s mV on %d lines in a row (below %d mV)" % (
+        " then ".join(str(v) for v in vdd) or "?", len(vdd), facts.get("vdd_min_mv", 3000))
+
+
+def judge_power(facts, sha):
+    """Supply trouble is HARDWARE whatever the firmware."""
+    return ("HARDWARE", "Board %s power is low: %s%s." % (
+        facts.get("board") or "?", power_what(facts),
+        " on verified sha %s" % sha if sha else ""))
+
+
+def judge_estop(facts):
+    """An operator pressed the emergency stop: deliberate, not a fault."""
+    return ("HARDWARE", "emergency stop pressed on board %s (blue button %s, %s): an operator "
+            "action, not a fault; it resolves when the button is released." % (
+                facts.get("board") or "?", facts.get("button", "B1"),
+                facts.get("pin_in", "PC13")))
 
 
 def _last_txt(history, sha):
