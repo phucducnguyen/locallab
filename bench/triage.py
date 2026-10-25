@@ -130,15 +130,34 @@ def _last_txt(history, sha):
     return " %s (passed at %s)" % (s, _fmt_t(t)) if s else " (none recorded yet)"
 
 
-def judge_run(verdict, tests, sha, history, cites=None):
-    """(triage, reason) for a bench run of verified sha with this verdict and TEST results."""
+def judge_run(verdict, tests, sha, history, cites=None, flashed=None, why=None):
+    """(triage, reason) for a bench run with this verdict and TEST results.
+
+    sha is the verified sha (None when the flash was never verified); flashed
+    is the sha the bench built or flashed; why is the bench's own note.
+    """
     tests = tests or {}
+    flashed = flashed or sha
+    note = " (%s)" % why if why else ""
     if verdict == "PASS":
+        if not sha:
+            return _unverified("a passing run")
         return ("NONE", "Verified sha %s passed its run: %d tests PASS and LW RESULT PASS." % (
             sha, sum(1 for v in tests.values() if v == "PASS")))
+    if verdict == "BUILD_ERROR":
+        if why and why.startswith("bench:"):
+            return ("UNKNOWN", "The bench could not build %s%s; nothing was flashed." % (
+                flashed, note))
+        return ("CODE", "Commit %s does not build%s; nothing was flashed." % (flashed, note))
     if verdict == "FLASH_ERROR":
         return ("UNKNOWN", "No LW BOOT line with fw=%s arrived within the capture window after "
-                "the flash, so the flash is not verified." % (sha,))
+                "the flash%s, so the flash is not verified." % (flashed, note))
+    if not sha and verdict in ("NO_OUTPUT", "GARBLED"):
+        what = ("printed nothing" if verdict == "NO_OUTPUT"
+                else "printed only unreadable bytes")
+        return ("UNKNOWN", "After the flash of %s the board %s and no LW BOOT line, so %s is not "
+                "verified; confirm by reflashing the last passing sha%s." % (
+                    flashed, what, flashed, _last_txt(history, flashed)))
     if not sha:
         return _unverified("the run's %s" % verdict)
     if verdict == "HARDFAULT":
