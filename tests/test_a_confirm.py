@@ -94,9 +94,9 @@ class ConfirmFlow(unittest.TestCase):
         a = rig.one("SELECT * FROM alerts WHERE transition='confirmed'")
         self.assertEqual(a["reply_to_alert_id"], rig.open_aid)
         self.assertIsNone(a["sent"])
-        self.assertIn("Who: %s" % (route or "none"), a["text"])
-        self.assertIn("triage UNKNOWN → %s" % triage, a["text"])
-        self.assertIn("#%d" % rig.iid, a["text"])
+        self.assertIn("Team: %s." % (route or "Triage").replace(" team", "").lower(), a["text"])
+        self.assertIn("(#%d)" % rig.iid, a["text"])
+        self.assertIn("/ask %d" % rig.iid, a["text"])
         self.assertLessEqual(len(a["text"].splitlines()), 6)
         ev = rig.one("SELECT * FROM events WHERE kind='TRIAGE_CONFIRM'")
         self.assertEqual(json.loads(ev["fields"])["to"], triage)
@@ -113,8 +113,7 @@ class ConfirmFlow(unittest.TestCase):
         self.assertIn("NO_OUTPUT", res.reason)
         self.assertIn("ran clean", res.reason)
         a = self.check_written(rig, "CODE", "Firmware team")
-        self.assertIn("Confirmed by reflashing", a["text"])
-        self.assertIn("output returned yes", a["text"])
+        self.assertIn("It is the code, not the board.", a["text"])
 
     def test_last_pass_still_fails_is_hardware(self):
         rig, board = Rig(self), FakeBoard(healthy=False)
@@ -123,7 +122,7 @@ class ConfirmFlow(unittest.TestCase):
         self.assertIs(res.output_returned, False)
         self.assertIn("no LW output returned", res.reason)
         a = self.check_written(rig, "HARDWARE", "Hardware team")
-        self.assertIn("output returned no", a["text"])
+        self.assertIn("It is the board, not the code.", a["text"])
 
     def test_loopback_only_new_sha_then_reflash_fails_is_hardware(self):
         rig = Rig(self, verdict="FAIL")
@@ -160,7 +159,7 @@ class ConfirmFlow(unittest.TestCase):
         res = confirm.confirm(rig.incident(), LAST, lambda s: confirm.Capture("BUILD_ERROR"))
         self.assertEqual(res.triage, "UNKNOWN")
         a = rig.one("SELECT text FROM alerts WHERE transition='confirmed'")
-        self.assertIn("could not decide", a["text"])
+        self.assertIn("could not tell if it is the board or the code", a["text"])
 
     def test_run_without_incident(self):
         rig = Rig(self, verdict="GARBLED")

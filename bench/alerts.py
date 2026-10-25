@@ -1,17 +1,14 @@
 """The bench's alert wording (docs/01-day-contract.md, "Alerts"), fixed text, no model.
 
-Lane T (2026-10-25, Patrick): every Telegram message starts with one plain-English
-line a non-technical reader understands, then a short technical part. At most 6
-lines; the incident number is always there. The first alert:
+Lane T (2026-10-25, Patrick's rule): every Telegram message is 2-3 short lines in common
+everyday English. The first line says what happened, with the board and the incident
+number; the next says the team and points to /ask. Technical words (HardFault, pins,
+file:line, vdd) appear only after "Details:" and only when needed. Raw lines, sha and
+timings stay in the DB, the dashboard and the issue. Example:
 
-    🔴 Problem on test board 1: the sensor wire (A2–A3) is disconnected.
-    Who: Hardware team · Not a software bug.
-    Details: sensor link OPEN (A2–A3 wire) · nucleo-1 · fw a0f0c9f · #5
-    Line: LW HEALTH 812 ... sensor=OPEN  [20:41:07.123]
-    Alert 1.9 s after the fault.
-    Why: <the triage reason>                (CODE and UNKNOWN only)
+    🔴 Board 1: the sensor wire came loose. (#5)
+    Team: hardware. Not a code problem. Ask: /ask 5
 
-Resolve, flap, diag, explain, decode and confirm rows are one to three lines.
 Board text inside an alert is quoted as data; alerts are sent as plain text
 (no parse mode), so nothing in a board line can format or link anything.
 """
@@ -71,9 +68,9 @@ def _last(x):
 
 
 def board_name(board):
-    """'nucleo-1' -> 'test board 1' for the plain line (the id stays in Details)."""
+    """'nucleo-1' -> 'Board 1' (the full name stays in the DB)."""
     m = re.search(r"(\d+)$", board or "")
-    return "test board %s" % m.group(1) if m else (board or "the test board")
+    return "Board %s" % m.group(1) if m else (board or "The board")
 
 
 def _cap(s):
@@ -167,138 +164,113 @@ def device_tag(inc):
 
 
 def _thing(inc):
-    """The plain noun: 'sensor wire (A2–A3)', 'power supply', 'emergency stop button'."""
-    dev, f, _ = _device(inc)
+    """The plain noun: 'sensor wire', 'test wire', 'radio wire', 'power', 'stop button'."""
+    dev = _device(inc)[0]
     if dev in WIRE_NAMES:
-        return "%s (%s)" % (WIRE_NAMES[dev], _pins(f.get("pins") or DEFAULT_PINS[dev]))
-    if dev == "power":
-        return "power supply"
-    if dev == "estop":
-        return "emergency stop button"
-    return None
+        return WIRE_NAMES[dev]
+    return {"power": "power", "estop": "stop button"}.get(dev)
 
 
-def plain_what(inc):
-    """What happened, in words for someone who has never seen the bench."""
+def plain_what(inc, triage):
+    """What happened, in everyday words."""
     dev, f, ev = _device(inc)
     kind = _get(inc, "kind")
     if dev in WIRE_NAMES:
         st = _state(dev, f)
-        how = {"OPEN": "is disconnected", "STUCK": "is shorted to ground"}.get(st, "is faulty")
-        return "the %s %s" % (_thing(inc), how)
+        how = {"OPEN": "came loose", "STUCK": "is stuck to ground"}.get(st, "is not working")
+        return "the %s %s" % (WIRE_NAMES[dev], how)
     if kind == "HARDFAULT":
-        return "the firmware crashed"
+        return "the new code made it crash" if triage == "CODE" else "it crashed"
     if kind == "RUN_FAIL":
         v = f.get("verdict")
-        return {"NO_OUTPUT": "the board printed nothing after the update",
-                "RESET_LOOP": "the board keeps restarting",
-                "HARDFAULT": "the firmware crashed during its tests"}.get(
-                    v, "the firmware failed its tests")
-    return {"SILENT": "the board stopped responding",
-            "REBOOT": "the board restarted unexpectedly",
-            "LINK_DOWN": "the cable link to the board is down"}.get(kind, "something went wrong")
+        if v == "NO_OUTPUT":
+            return "it stopped talking after the update"
+        if v == "RESET_LOOP":
+            return "it keeps restarting"
+        if v == "HARDFAULT":
+            return "the new code made it crash" if triage == "CODE" else "it crashed"
+        return "the new code failed its tests" if triage == "CODE" else "it failed its tests"
+    return {"SILENT": "it stopped talking", "REBOOT": "it restarted by itself",
+            "LINK_DOWN": "the cable to it is not working"}.get(kind, "something went wrong")
 
 
-def quote(cite):
-    if not cite or not cite.get("line"):
-        return None
-    return "Line: %s  [%s]" % (trim(cite["line"], LINE_MAX), cite.get("raw_ts") or "?")
+def _team(route, triage):
+    if triage == "NONE":
+        return "none needed"
+    return (route or "Triage").replace(" team", "").lower()
 
 
-def _head(inc, triage):
+def _details(inc):
+    """The short technical part, or None."""
+    dev, f, ev = _device(inc)
+    if _get(inc, "kind") == "HARDFAULT" or f.get("verdict") == "HARDFAULT":
+        return ev.get("file_line")
+    return None
+
+
+def _head(inc, triage, iid):
     dev, f, _ = _device(inc)
     b = board_name(_get(inc, "board"))
     if dev == "estop":
-        return "⛔ Someone pressed the emergency stop on %s. Not a fault." % b
+        return "⛔ %s: someone pressed the stop button. Not a fault. (#%d)" % (b, iid)
     if dev == "power":
         if f.get("cause") == "BOR":
-            return "🔴 %s reset because its power supply dipped too low." % _cap(b)
-        v = _last(f.get("vdd"))
-        volts = " (%.2f V)" % (v / 1000.0) if isinstance(v, (int, float)) else ""
-        return "🔴 %s is getting too little power%s." % (_cap(b), volts)
+            return "🔴 %s restarted because its power dropped. (#%d)" % (b, iid)
+        return "🔴 %s is not getting enough power. (#%d)" % (b, iid)
     if triage == "UNKNOWN":
-        return ("🟡 Problem on %s: %s. Checking whether it's the board or the code…"
-                % (b, plain_what(inc)))
-    return "🔴 Problem on %s: %s." % (b, plain_what(inc))
-
-
-def _who(inc, triage, route):
-    if _device(inc)[0] == "estop":
-        return None   # an operator action: nobody to call
-    if triage == "HARDWARE":
-        return "Who: %s · Not a software bug." % (route or "Hardware team")
-    if triage == "CODE":
-        return "Who: %s · Caused by the latest code change (%s)." % (
-            route or "Firmware team", _get(inc, "firmware") or "?")
-    if triage == "UNKNOWN":
-        return "Who: %s" % (route or "Triage")
-    return None   # NONE (an operator action): nobody to call
+        return "🟡 %s: %s. Checking if it is the board or the code. (#%d)" % (
+            b, plain_what(inc, triage), iid)
+    return "🔴 %s: %s. (#%d)" % (b, plain_what(inc, triage), iid)
 
 
 def alert_text(transition, inc, cite=None):
-    """The fixed wording for open, resolve and flap-<n>; inc is an incidents row or dict."""
+    """The fixed wording for open, resolve and flap-<n>; inc is an incidents row or dict.
+
+    cite (the quoted board line) is kept in the DB evidence, not in the message."""
     iid = _get(inc, "id")
     b = board_name(_get(inc, "board"))
     thing = _thing(inc)
     if transition == "resolve":
         n = _get(inc, "duration_s") or 0
-        if thing == "emergency stop button":
-            plain = "✅ Cleared: the emergency stop on %s was released (after %.0f s)." % (b, n)
-        elif thing:
-            plain = "✅ Fixed: %s's %s is back to normal (after %.0f s)." % (b, thing, n)
-        else:
-            plain = "✅ Fixed: %s is working normally again (after %.0f s)." % (b, n)
-        return "%s\n#%d · %s resolved" % (plain, iid, device_tag(inc))
+        if thing == "stop button":
+            return "✅ %s: the stop button was released after %.0f seconds. (#%d)" % (b, n, iid)
+        if thing:
+            return "✅ %s: the %s is back. Fixed after %.0f seconds. (#%d)" % (b, thing, n, iid)
+        return "✅ %s is working again. Fixed after %.0f seconds. (#%d)" % (b, n, iid)
     if transition.startswith("flap-"):
         n = _get(inc, "flaps") or 0
         if thing and "wire" in thing:
-            plain = ("🟠 %s's %s keeps connecting and disconnecting (%d times). Probably loose."
-                     % (_cap(b), thing, n))
-        else:
-            plain = "🟠 %s keeps failing and recovering (%d times)." % (
-                _cap(thing and "%s's %s" % (b, thing) or b), n)
-        return "%s\n#%d · %s flapping" % (plain, iid, device_tag(inc))
+            return "🟠 %s: the %s keeps coming and going. Probably loose. (#%d)" % (b, thing, iid)
+        return "🟠 %s: the problem keeps coming and going (%d times). (#%d)" % (b, n, iid)
     if transition != "open":
         raise ValueError(transition)
     triage = _get(inc, "triage") or "UNKNOWN"
-    route = _get(inc, "route")
-    out = [_head(inc, triage)]
-    who = _who(inc, triage, route)
-    if who:
-        out.append(who)
-    out.append("Details: %s · %s · fw %s · %s · #%d" % (
-        device_what(inc), _get(inc, "board") or "?", _get(inc, "firmware") or "?",
-        triage, iid))
-    q = quote(cite)
-    if q:
-        out.append(q)
-    t_open, t_bad = _get(inc, "t_open"), _get(inc, "t_first_bad_line")
-    if t_open is not None and t_bad is not None and t_open >= t_bad:
-        out.append("Alert %.1f s after the fault." % (t_open - t_bad))
-    if triage in ("CODE", "UNKNOWN") and _get(inc, "reason"):
-        out.append("Why: " + trim(_get(inc, "reason"), REASON_MAX))
-    return "\n".join(out)
+    if _device(inc)[0] == "estop":
+        return _head(inc, triage, iid)   # an operator action: one line, nobody to call
+    team = "Team: %s." % _team(_get(inc, "route"), triage)
+    if triage == "HARDWARE":
+        team += " Not a code problem."
+    det = _details(inc)
+    if det:
+        team += " Details: %s." % det
+    return "%s\n%s Ask: /ask %d" % (_head(inc, triage, iid), team, iid)
 
 
 def diag_text(iid, cmd, cites, timeout_s):
+    """The board self-check reply (the board lines stay in the incident evidence)."""
     if not cites:
-        return ("🔧 The board did not answer its self-test (#%d).\nDetails: no reply to '%s' "
-                "within %.0f s" % (iid, cmd, timeout_s))
-    shown = [c for c in cites if not (c.get("line") or "").startswith("LW REPLY")] or cites
-    body = " | ".join("%s  [%s]" % (trim(c["line"], LINE_MAX), c.get("raw_ts") or "?")
-                      for c in shown[:3])
+        return "🔧 The board did not answer its self-check. (#%d)" % iid
     failed = any(re.search(r"\bFAIL", c.get("line") or "") for c in cites)
-    return "🔧 The board's own self-test %s (#%d).\nDetails: %s" % (
-        "failed" if failed else "passed", iid, body)
+    return "🔧 The board ran its own self-check: it %s. (#%d)" % (
+        "failed" if failed else "passed", iid)
 
 
 def decode_text(iid, ev):
     """The decode follow-up row: where in the code the crash happened."""
-    ev = ev or {}
-    where = ev.get("file_line")
-    plain = ("🧩 Found where the firmware crashed (#%d): %s" % (iid, where) if where
-             else "🧩 Decoded the crash registers (#%d)." % iid)
-    return "%s\nDetails: %s" % (plain, trim(hardfault_what(ev), 300))
+    where = (ev or {}).get("file_line")
+    if where:
+        return "🧩 Found where the code crashed. (#%d)\nDetails: %s" % (iid, where)
+    return "🧩 Could not find where the code crashed. (#%d) Ask: /ask %d" % (iid, iid)
 
 
 # ---- the explain condenser ----
@@ -361,7 +333,7 @@ def explain_text(iid, text=None):
             diag = p
             break
     if diag is None:
-        return "🧠 What the AI found (#%d): %s" % (iid, UNAVAILABLE)
+        return "🧠 #%d: %s" % (iid, UNAVAILABLE)
     body = [ln for ln in lines if not re.match(r"^DIAGNOSIS\b", _plain(ln))]
     secs = _sections(body)
     cause = next((b for n, b in secs if "cause" in n and b), None)
@@ -377,10 +349,9 @@ def explain_text(iid, text=None):
             cause = _plain(" ".join(pre)) or None
         else:
             cause = _plain(" ".join(body)) or None
-    out = ["🧠 What the AI found (#%d): %s" % (
-        iid, trim(_cites_fit(_sentences(cause, 2)), 2 * EXPLAIN_LINE_MAX)
-        if cause else "see the diagnosis below.")]
+    out = ["🧠 #%d: %s" % (iid, trim(_cites_fit(_sentences(cause, 2)), EXPLAIN_LINE_MAX)
+                          if cause else "see the diagnosis below.")]
     if nxt:
-        out.append("Next step: " + trim(_cites_fit(_sentences(nxt, 1)), EXPLAIN_LINE_MAX))
-    out.append(trim(_cites_fit(diag), EXPLAIN_LINE_MAX + 100))
+        out.append("Next: " + trim(_cites_fit(_sentences(nxt, 1)), EXPLAIN_LINE_MAX))
+    out.append(diag)
     return "\n".join(out)

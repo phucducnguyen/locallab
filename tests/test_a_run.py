@@ -106,14 +106,9 @@ class TestJumper(unittest.TestCase):
         alerts = r.rows("SELECT * FROM alerts")
         self.assertEqual([a["transition"] for a in alerts], ["open"])
         text = alerts[0]["text"].splitlines()
-        self.assertEqual(text[0], "🔴 Problem on test board 1: the test wire (A0–A1) is "
-                                  "disconnected.")
-        self.assertEqual(text[1], "Who: Hardware team · Not a software bug.")
-        self.assertEqual(text[2], "Details: loopback OPEN (A0–A1 wire) · nucleo-1 · fw %s · "
-                                  "HARDWARE · #%d" % (inc["firmware"], inc["id"]))
-        self.assertEqual(text[3], "Line: LW HEALTH 2 loopback=OPEN  [T3.01]")
-        self.assertEqual(text[4], "Alert 1.0 s after the fault.")
-        self.assertEqual(len(text), 5)
+        self.assertEqual(text, ["🔴 Board 1: the test wire came loose. (#%d)" % inc["id"],
+                                "Team: hardware. Not a code problem. "
+                                "Ask: /ask %d" % inc["id"]])
         self.assertIsNone(alerts[0]["sent"])
         ev = json.loads(inc["evidence"])
         cited = ev["lines"][0]
@@ -129,8 +124,8 @@ class TestJumper(unittest.TestCase):
         diag = r.rows("SELECT * FROM alerts WHERE transition='diag'")
         self.assertEqual(len(diag), 1)
         self.assertEqual(diag[0]["reply_to_alert_id"], alerts[0]["id"])
-        self.assertIn("LW TEST loopback FAIL pa1=high", diag[0]["text"])
-        self.assertIn("[T4.20]", diag[0]["text"])
+        self.assertEqual(diag[0]["text"], "🔧 The board ran its own self-check: it failed. "
+                                          "(#%d)" % inc["id"])
         self.assertEqual(self.ex.queued, [inc["id"]])
         ev = json.loads(r.rows("SELECT evidence FROM incidents")[0]["evidence"])
         self.assertEqual(len(ev["diagnostic"]["reply"]), 2)
@@ -148,9 +143,8 @@ class TestJumper(unittest.TestCase):
         r.bench.tick(80)
         res = r.rows("SELECT * FROM alerts WHERE transition='resolve'")
         self.assertEqual(len(res), 1)
-        self.assertTrue(res[0]["text"].startswith("✅ Fixed: test board 1's test wire (A0–A1) "
-                                                  "is back to normal (after 9 s)."))
-        self.assertIn("#%d" % inc[0]["id"], res[0]["text"])
+        self.assertEqual(res[0]["text"], "✅ Board 1: the test wire is back. Fixed after 9 "
+                                         "seconds. (#%d)" % inc[0]["id"])
         self.assertEqual(res[0]["reply_to_alert_id"], alerts[0]["id"])
         kinds = [e["kind"] for e in r.rows("SELECT kind FROM events")]
         for k in ("RUN_START", "RUN_END", "INCIDENT_OPEN", "INCIDENT_RESOLVE"):
@@ -165,7 +159,7 @@ class TestJumper(unittest.TestCase):
         self.assertEqual((inc["triage"], inc["route"]), ("UNKNOWN", "Triage"))
         self.assertIsNone(inc["firmware"])
         self.assertEqual(r.rows("SELECT * FROM runs"), [])
-        self.assertIn("Who: Triage", r.rows("SELECT text FROM alerts")[0]["text"])
+        self.assertIn("Team: triage.", r.rows("SELECT text FROM alerts")[0]["text"])
 
     def test_diag_skipped_before_result_and_alive(self):
         r = self.r
@@ -184,7 +178,7 @@ class TestJumper(unittest.TestCase):
         self.assertEqual(r.sent, ["test loopback"])
         r.bench.tick(6.5)
         diag = r.rows("SELECT * FROM alerts WHERE transition='diag'")
-        self.assertIn("no reply to 'test loopback' within 3 s", diag[0]["text"])
+        self.assertIn("did not answer its self-check", diag[0]["text"])
 
     def test_flaps_write_one_incident_and_rate_limited_alerts(self):
         r = self.r
@@ -206,9 +200,8 @@ class TestJumper(unittest.TestCase):
         trans = [a["transition"] for a in r.rows("SELECT transition FROM alerts ORDER BY id")]
         self.assertEqual(trans, ["open", "flap-1", "resolve"])
         flap = r.rows("SELECT * FROM alerts WHERE transition='flap-1'")[0]
-        self.assertTrue(flap["text"].startswith("🟠 Test board 1's test wire (A0–A1) keeps "
-                                                "connecting and disconnecting (1 times)."))
-        self.assertIn("#%d · loopback (A0–A1) flapping" % inc[0]["id"], flap["text"])
+        self.assertEqual(flap["text"], "🟠 Board 1: the test wire keeps coming and going. "
+                                       "Probably loose. (#%d)" % inc[0]["id"])
         self.assertEqual(len(r.rows("SELECT * FROM routing")), 1)
 
     def test_restart_reloads_open_incident_and_sends_nothing_new(self):
@@ -379,8 +372,8 @@ class TestExplainWorker(unittest.TestCase):
             opened = self.r.rows("SELECT id FROM alerts WHERE incident_id=? AND "
                                  "transition='open'", iid)[0]["id"]
             self.assertEqual(row["reply_to_alert_id"], opened)
-            self.assertTrue(row["text"].startswith("🧠 What the AI found (#%d): The loopback "
-                                                   "reads high." % iid))
+            self.assertTrue(row["text"].startswith("🧠 #%d: The loopback reads high." % iid))
+            self.assertLessEqual(len(row["text"].splitlines()), 3)
             self.assertTrue(row["text"].splitlines()[-1].startswith("DIAGNOSIS: HARDWARE"))
             ev = json.loads(self.r.rows("SELECT evidence FROM incidents WHERE id=?",
                                         iid)[0]["evidence"])

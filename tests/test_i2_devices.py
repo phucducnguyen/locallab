@@ -151,9 +151,8 @@ class TestLinks(unittest.TestCase):
         self.assertEqual(why, "Radio link STUCK (A5 shorted to ground) on 2 lines in a row on "
                               "a0f0c9f, which passed with all links OK; no reflash since.")
         lines = alert_text("open", row(inc)).splitlines()
-        self.assertEqual(lines[0], "🔴 Problem on test board 1: the radio wire (A4–A5) is "
-                                   "shorted to ground.")
-        self.assertTrue(lines[2].startswith("Details: radio link STUCK (A5 to ground) · "))
+        self.assertEqual(lines[0], "🔴 Board 1: the radio wire is stuck to ground. (#1)")
+        self.assertEqual(lines[1], "Team: hardware. Not a code problem. Ask: /ask 1")
 
     def test_old_format_lines_open_nothing(self):
         f = Feed()
@@ -202,9 +201,8 @@ class TestEstop(unittest.TestCase):
         self.assertEqual(judge_incident("ESTOP", inc.facts, inc.cites, None, PassHistory())[0],
                          "HARDWARE")
         lines = alert_text("open", row(inc)).splitlines()
-        self.assertEqual(lines[0], "⛔ Someone pressed the emergency stop on test board 1. "
-                                   "Not a fault.")
-        self.assertTrue(lines[1].startswith("Details: emergency stop pressed (operator action)"))
+        self.assertEqual(lines[0], "⛔ Board 1: someone pressed the stop button. Not a fault. (#1)")
+        self.assertEqual(len(lines), 1)
 
 
 class TestPower(unittest.TestCase):
@@ -226,8 +224,8 @@ class TestPower(unittest.TestCase):
         self.assertEqual(tri, "HARDWARE")
         self.assertIn("vdd 2950 then 2950 mV on 2 lines in a row (below 3000 mV)", why)
         lines = alert_text("open", row(inc)).splitlines()
-        self.assertEqual(lines[0], "🔴 Test board 1 is getting too little power (2.95 V).")
-        self.assertTrue(lines[2].startswith("Details: power low (vdd 2950 mV) · "))
+        self.assertEqual(lines[0], "🔴 Board 1 is not getting enough power. (#1)")
+        self.assertEqual(lines[1], "Team: hardware. Not a code problem. Ask: /ask 1")
         f.health(4, 4, vdd=3000)
         f.health(5, 5)                       # no vdd: unknown, not counted
         f.health(6, 6, vdd=3100)
@@ -247,9 +245,8 @@ class TestPower(unittest.TestCase):
         self.assertEqual((tri, route_for(tri)), ("HARDWARE", "Hardware team"))
         self.assertIn("brown-out reset (reset=BOR,PIN)", why)
         lines = alert_text("open", row(inc)).splitlines()
-        self.assertEqual(lines[0], "🔴 Test board 1 reset because its power supply dipped "
-                                   "too low.")
-        self.assertTrue(lines[2].startswith("Details: power brown-out reset (BOR) · "))
+        self.assertEqual(lines[0], "🔴 Board 1 restarted because its power dropped. (#1)")
+        self.assertEqual(lines[1], "Team: hardware. Not a code problem. Ask: /ask 1")
 
     def test_last_power_updates_only_known_values(self):
         f = Feed()
@@ -294,13 +291,11 @@ class TestTriageAndAlerts(unittest.TestCase):
     def test_first_alert_head_and_fixed_lines(self):
         inc = self.sensor_inc()
         text = alert_text("open", row(inc, iid=7)).splitlines()
-        self.assertEqual(text[0], "🔴 Problem on test board 1: the sensor wire (A2–A3) is "
-                                  "disconnected.")
-        self.assertEqual([l.split(":")[0] for l in text[1:]], ["Who", "Details"])
-        self.assertTrue(text[2].startswith("Details: sensor link OPEN (A2–A3 wire) · "))
-        self.assertTrue(text[2].endswith("· #7"))
-        self.assertEqual(alert_text("flap-1", row(inc, iid=7)).splitlines()[1],
-                         "#7 · sensor link (A2–A3) flapping")
+        self.assertEqual(text[0], "🔴 Board 1: the sensor wire came loose. (#7)")
+        self.assertEqual(text[1], "Team: hardware. Not a code problem. "
+                                  "Ask: /ask 7")
+        self.assertEqual(alert_text("flap-1", row(inc, iid=7)),
+                         "🟠 Board 1: the sensor wire keeps coming and going. Probably loose. (#7)")
 
     def test_loopback_head_unchanged(self):
         f = Feed()
@@ -308,7 +303,7 @@ class TestTriageAndAlerts(unittest.TestCase):
         f.health(2, 2, loopback="OPEN")
         inc = f.types("open")[0]["inc"]
         self.assertEqual(alert_text("open", row(inc)).splitlines()[0],
-                         "🔴 Problem on test board 1: the test wire (A0–A1) is disconnected.")
+                         "🔴 Board 1: the test wire came loose. (#1)")
 
 
 class TestHardfaultDump(unittest.TestCase):

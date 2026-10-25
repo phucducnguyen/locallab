@@ -131,7 +131,7 @@ class TestSender(Base):
         path, body = self.tg.requests[0]
         self.assertEqual(path, "/bot%s/sendMessage" % FAKE_TOKEN)
         self.assertEqual(body["chat_id"], FAKE_CHAT)
-        self.assertTrue("test board 1: the test wire (A0–A1) is disconnected" in body["text"])
+        self.assertTrue("Board 1: the test wire came loose." in body["text"])
         self.assertNotIn("parse_mode", body)
         a = self.alerts()[0]
         self.assertEqual(a["telegram_message_id"], 101)
@@ -145,7 +145,7 @@ class TestSender(Base):
         self.assertEqual(s2.step(), 0)
         self.assertEqual(len(self.tg.requests), 1)
         out = self.out.getvalue()
-        self.assertEqual(out.count("test board 1: the test wire (A0–A1) is disconnected"), 1)
+        self.assertEqual(out.count("Board 1: the test wire came loose."), 1)
         self.assertNotIn(FAKE_TOKEN, out)
         self.assertNotIn("FAKE-token", out)
 
@@ -228,7 +228,7 @@ class TestUnreachable(Base):
         a = self.alerts()[0]
         self.assertIsNone(a["sent"])
         out = self.out.getvalue()
-        self.assertEqual(out.count("test board 1: the test wire (A0–A1) is disconnected"), 1)   # console has it already
+        self.assertEqual(out.count("Board 1: the test wire came loose."), 1)   # console has it already
         self.assertIn("unreachable", out)
         self.assertNotIn(FAKE_TOKEN, out)
         self.assertNotIn("127.0.0.1", out)
@@ -241,7 +241,7 @@ class TestUnreachable(Base):
             s2 = self.sender(tg.base)
             s2.step()
             self.assertEqual(len(tg.requests), 1)
-            self.assertEqual(self.out.getvalue().count("test board 1: the test wire (A0–A1) is disconnected"), 1)
+            self.assertEqual(self.out.getvalue().count("Board 1: the test wire came loose."), 1)
         finally:
             tg.close()
 
