@@ -172,7 +172,7 @@ class LiveScenarioTest(Base):
     def test_jumper_banner_and_stopwatch(self):
         run_emit(self.db, "jumper")
         f = self.frame()
-        self.assertIn(">>> HARDWARE: loopback OPEN on PA1 <<<", f)
+        self.assertIn(">>> HARDWARE: loopback OPEN on A0-A1/PA1 <<<", f)
         c = self.rw()
         inc = c.execute("SELECT * FROM incidents ORDER BY id DESC LIMIT 1").fetchone()
         c.close()

@@ -48,6 +48,76 @@ def clean(s, limit=400):
     return "".join(out)[:limit]
 
 
+# ---------- the HEALTH line, parsed by key (older lines lack sensor, radio, estop) ----------
+
+DEVICES = ("loopback", "sensor", "radio")
+VDD_MIN_MV = 3000
+_HEALTH_RE = re.compile(r"\bLW HEALTH\b(.*)")
+_KV_RE = re.compile(r"([a-z_]+)=(\S+)")
+
+
+def _num(v, kind):
+    try:
+        return kind(v)
+    except (TypeError, ValueError):
+        return None
+
+
+def parse_health(line):
+    """{n, loopback, sensor, radio, estop, vdd, temp} from one LW HEALTH line; None if absent.
+
+    Returns None when the line is not a HEALTH line.
+    """
+    m = _HEALTH_RE.search(line or "")
+    if not m:
+        return None
+    rest = m.group(1).split()
+    kv = dict(_KV_RE.findall(" ".join(rest)))
+    out = {"n": _num(rest[0], int) if rest and "=" not in rest[0] else None}
+    for k in DEVICES:
+        v = kv.get(k)
+        out[k] = v if v in ("OK", "OPEN", "STUCK") else None
+    e = kv.get("estop")
+    out["estop"] = e if e in ("ON", "OFF") else None
+    out["vdd"] = _num(kv.get("vdd"), int)
+    out["temp"] = _num(kv.get("temp"), float)
+    return out
+
+
+def health_bad(h):
+    """The faults one parsed HEALTH line shows: [(key, value)]."""
+    bad = [(k, h[k]) for k in DEVICES if h.get(k) in ("OPEN", "STUCK")]
+    if h.get("estop") == "ON":
+        bad.append(("estop", "ON"))
+    if h.get("vdd") is not None and h["vdd"] < VDD_MIN_MV:
+        bad.append(("vdd", h["vdd"]))
+    return bad
+
+
+def latest_health(lines):
+    """The newest parsed HEALTH line in a sequence of serial lines, or None."""
+    for line in reversed(lines):
+        h = parse_health(line)
+        if h is not None:
+            return h
+    return None
+
+
+_CAUSE_RE = re.compile(r"\bLW DUMP cause\b(.*)")
+
+
+def dump_causes(line):
+    """Cause names from an "LW DUMP cause <NAMES>" line, else None."""
+    m = _CAUSE_RE.search(line or "")
+    if not m:
+        return None
+    return [clean(w, 40) for w in re.split(r"[\s,|]+", m.group(1)) if clean(w, 40)]
+
+
+CAUSE_BEFORE_S = 30.0   # the DUMP burst comes just before the first HARDFAULT line
+CAUSE_AFTER_S = 2.0
+
+
 def db_path(path=None):
     return os.path.expanduser(path or os.environ.get("LW_DB") or DEFAULT_DB)
 
@@ -99,7 +169,7 @@ class Db:
     def read(self):
         """A snapshot dict: incidents, alerts per incident, last sent alert, heartbeat."""
         st = {"error": None, "open": [], "recent": [], "alerts": {}, "last_sent": None,
-              "heartbeat": None, "boards": []}
+              "heartbeat": None, "boards": [], "causes": {}}
         try:
             st["open"] = [dict(r) for r in self.query(
                 "SELECT * FROM incidents WHERE state != 'RESOLVED' ORDER BY id DESC LIMIT 6")]
@@ -128,12 +198,56 @@ class Db:
                 msg = "DB has no bench tables yet (%s)" % msg
             st["error"] = "DB: %s" % msg
             return st
+        for inc in st["open"]:
+            if inc.get("kind") == "HARDFAULT":
+                try:
+                    names = self.causes(inc)
+                except sqlite3.Error:
+                    names = None
+                if names:
+                    st["causes"][inc["id"]] = names
         try:  # lane A's own table; absent in the stub
             r = self.query("SELECT t FROM heartbeat WHERE id=1")
             st["heartbeat"] = r[0][0] if r else None
         except sqlite3.Error:
             pass
         return st
+
+
+    def causes(self, inc):
+        """The DUMP cause names for a HARDFAULT incident: from its evidence, else from the
+        "LW DUMP cause" line logged just before its first bad line (matched on the line text,
+        since its event kind depends on the parser version)."""
+        ev = loads(inc.get("evidence"))
+        for k in ("cause", "causes", "dump_cause"):
+            v = ev.get(k)
+            if isinstance(v, str) and v.strip():
+                return [clean(w, 40) for w in re.split(r"[\s,|]+", v) if w]
+            if isinstance(v, list) and v:
+                return [clean(w, 40) for w in v if isinstance(w, str)]
+        dump = ev.get("dump")
+        if isinstance(dump, dict):
+            v = dump.get("cause") or dump.get("causes")
+            if isinstance(v, list) and v:
+                return [clean(w, 40) for w in v if isinstance(w, str)]
+            if isinstance(v, str) and v.strip():
+                return [clean(w, 40) for w in v.split()]
+        for c in ev.get("lines") or []:
+            names = dump_causes(c.get("line") if isinstance(c, dict) else c
+                                if isinstance(c, str) else None)
+            if names:
+                return names
+        t0 = inc.get("t_first_bad_line") or inc.get("t_open") or inc.get("opened")
+        if t0 is None:
+            return None
+        for r in self.query("SELECT fields FROM events WHERE board=? AND t_wall BETWEEN ? AND ? "
+                            "AND fields LIKE '%LW DUMP cause%' ORDER BY t_wall DESC, id DESC "
+                            "LIMIT 5", (inc.get("board"), t0 - CAUSE_BEFORE_S,
+                                        t0 + CAUSE_AFTER_S)):
+            names = dump_causes(loads(r["fields"]).get("line"))
+            if names:
+                return names
+        return None
 
 
 class EventTail:
