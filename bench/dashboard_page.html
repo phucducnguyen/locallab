@@ -66,10 +66,11 @@ main { display: grid; grid-template-columns: minmax(0, 56fr) minmax(0, 44fr); ga
   text-transform: uppercase; margin-bottom: 8px; }
 #aititle { font-size: 32px; font-weight: 800; color: var(--ai); line-height: 1.2; }
 #aibody { font-size: 30px; line-height: 1.25; margin-top: 10px; color: var(--text);
-  overflow: hidden; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 3; }
+  overflow: hidden; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; }
 #aibody .timer { font-size: 56px; font-weight: 800; color: var(--text);
   font-variant-numeric: tabular-nums; }
 #aibody .dim { color: var(--dim); font-size: 28px; }
+#cites .dim { color: var(--dim); font-size: 22px; }
 #ailive { font-size: 28px; margin-top: 10px; color: #d6c9f5; white-space: nowrap;
   overflow: hidden; text-overflow: ellipsis; font-variant-numeric: tabular-nums; }
 #ailive b { color: var(--ai); }
@@ -353,16 +354,22 @@ function renderAI(ai) {
 
   var cites = ai.citations || [], ul = document.getElementById("cites");
   ul.textContent = "";
-  cites.forEach(function (c) {
+  var unmatched = cites.filter(function (c) { return c.kind === "serial" && !c.line; }).length;
+  cites.filter(function (c) { return !(c.kind === "serial" && !c.line); }).forEach(function (c) {
     var li = document.createElement("li"), k = document.createElement("b");
     k.textContent = c.text; li.appendChild(k);
-    if (c.kind === "serial") span(li, "", c.line ? " " + c.line : " (line not in the log)");
+    if (c.kind === "serial") span(li, "", " " + c.line);
     else if (c.kind === "file") span(li, "", " source line");
     else if (c.kind === "diff") span(li, "", " change in the commit");
     else if (c.kind === "incident") span(li, "", " incident record");
     else if (c.kind === "bit") span(li, "", " fault bit");
     ul.appendChild(li);
   });
+  if (unmatched) {
+    var um = document.createElement("li");
+    span(um, "dim", unmatched + " cited time" + (unmatched > 1 ? "s" : "") + " did not match a log line exactly");
+    ul.appendChild(um);
+  }
   var ask = ai.ask, box = document.getElementById("aiask");
   box.className = ask && ask.question ? "on" : "";
   if (ask && ask.question) {
