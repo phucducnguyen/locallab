@@ -147,7 +147,10 @@ class Fleet:
 
     def say(self, msg):
         if self.logf:
-            print("fleet %s %s" % (time.strftime("%H:%M:%S"), msg), file=self.logf, flush=True)
+            try:
+                print("fleet %s %s" % (time.strftime("%H:%M:%S"), msg), file=self.logf, flush=True)
+            except (OSError, ValueError):  # a closed pipe (tee gone) must not stop the stop
+                self.logf = None
 
     def write_state(self, state="running"):
         atomic_json(self.boards_json, {
