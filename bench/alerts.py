@@ -6,6 +6,8 @@ Board text inside an alert is quoted as data; alerts are sent as plain text
 
 import json
 
+from bench.decode import fault_alert_line
+
 TEXT_MAX = 3800   # Telegram allows 4096 characters per message
 
 
@@ -36,9 +38,13 @@ def alert_text(transition, inc, cite=None):
     if cite and cite.get("line"):
         out.append("Line: [%s] %s" % (cite.get("raw_ts"), cite["line"]))
     try:
-        fl = json.loads(_get(inc, "evidence") or "{}").get("file_line")
-    except ValueError:
-        fl = None
+        ev = json.loads(_get(inc, "evidence") or "{}")
+        fl = ev.get("file_line")
+    except (ValueError, AttributeError):
+        ev, fl = {}, None
+    fault = fault_alert_line(ev) if transition == "open" else None
+    if fault:
+        out.append(fault)
     if fl:
         out.append("File: %s" % fl)
     out.append("Incident: %d" % iid)
