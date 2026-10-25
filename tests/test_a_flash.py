@@ -108,6 +108,11 @@ class TestCheckBenchRepo(unittest.TestCase):
                 commit(self.repo, "drop", remove=(name,))
                 self.assertEqual(check_bench_repo.check(self.repo), [])
 
+    def test_nested_key_dir_in_head_refused(self):
+        make_repo(self.repo, {"src/Bugs/a.patch": "x\n"})
+        probs = check_bench_repo.check(self.repo)
+        self.assertTrue(any("answer-key" in p for p in probs), probs)
+
     def test_extra_refs_refused(self):
         make_repo(self.repo)
         for kind, args in (("branch", ["branch", "other"]), ("tag", ["tag", "v1"]),
@@ -116,7 +121,8 @@ class TestCheckBenchRepo(unittest.TestCase):
                 git(self.repo, *args)
                 probs = check_bench_repo.check(self.repo)
                 self.assertTrue(any("besides main" in p for p in probs), probs)
-                self.assertEqual(check_bench_repo.main(["--repo", self.repo]), 1)
+                with contextlib.redirect_stderr(io.StringIO()):
+                    self.assertEqual(check_bench_repo.main(["--repo", self.repo]), 1)
                 ref = {"branch": "refs/heads/other", "tag": "refs/tags/v1",
                        "remote": "refs/remotes/origin/main"}[kind]
                 git(self.repo, "update-ref", "-d", ref)
@@ -132,6 +138,11 @@ class TestCheckBenchRepo(unittest.TestCase):
         make_repo(self.repo, {"CASES.md": "x\n"})
         sha = git(self.repo, "rev-parse", "--short=7", "HEAD")
         rc = run.main(["--flash", sha, "--repo", self.repo,
+                       "--db", os.path.join(self.tmp.name, "b.db")])
+        self.assertEqual(rc, 2)
+        self.assertFalse(os.path.exists(os.path.join(self.tmp.name, "b.db")))
+        # also without --flash: the bench never starts on an unfit repo
+        rc = run.main(["--repo", os.path.join(self.tmp.name, "missing"),
                        "--db", os.path.join(self.tmp.name, "b.db")])
         self.assertEqual(rc, 2)
         self.assertFalse(os.path.exists(os.path.join(self.tmp.name, "b.db")))
@@ -163,6 +174,31 @@ class TestBuild(unittest.TestCase):
         b2 = flash.build(self.repo, short, self.state)
         self.assertTrue(b2["ok"])
         self.assertFalse(os.path.exists(junk))
+
+    def test_answer_key_tree_never_built(self):
+        """main keeps its history: an ancestor whose tree has the key is refused."""
+        old = commit(self.repo, "key", {"CASES.md": "x\n"})
+        os.makedirs(os.path.join(self.repo, "docs", "LOGS"))
+        nested = commit(self.repo, "nested", {"docs/LOGS/a": "x\n"})
+        clean = commit(self.repo, "bench: main without the answer key",
+                       remove=("CASES.md", "docs"))
+        self.assertEqual(check_bench_repo.check(self.repo), [])
+        self.assertEqual(flash.tree_is_clean(self.repo, clean), (True, ""))
+        for sha in (old, nested):
+            with self.subTest(sha=sha):
+                ok, why = flash.tree_is_clean(self.repo, sha)
+                self.assertFalse(ok)
+                self.assertNotIn("docs/LOGS", why)   # names compared, never printed
+                b = flash.build(self.repo, sha[:7], self.state)
+                self.assertFalse(b["ok"])
+                self.assertTrue(b["refused_tree"])
+                self.assertFalse(os.path.exists(os.path.join(self.state, "build", sha[:7])))
+                conn = store.open_db(os.path.join(self.tmp.name, "%s.db" % sha[:7]))
+                Bench(conn, "nucleo-1", log=lambda s: None).build_failed(b, t=1.0)
+                r = dict(conn.execute("SELECT verdict, triage FROM runs").fetchone())
+                self.assertEqual(r, {"verdict": "BUILD_ERROR", "triage": "UNKNOWN"})
+                conn.close()
+        self.assertTrue(flash.build(self.repo, clean, self.state)["ok"])
 
     def test_toolchain_passed_to_make(self):
         b = flash.build(self.repo, self.full, self.state, toolchain="/opt/x/arm-none-eabi-")
@@ -342,16 +378,41 @@ class TestCopy(unittest.TestCase):
                 f.write(os.urandom(50000))
             drive = os.path.join(d, "drive")
             os.makedirs(drive)
-            ok, msg = flash.copy_bin(src, drive, sync=lambda: None)
+            ok, msg, warn = flash.copy_bin(src, drive, sync=lambda: None)
             self.assertTrue(ok, msg)
+            self.assertIsNone(warn)
             with open(src, "rb") as a, open(os.path.join(drive, "fw.bin"), "rb") as b:
                 self.assertEqual(a.read(), b.read())
-            ok, msg = flash.copy_bin(src, drive, opener=Breaking(20000), chunk=4096,
-                                     sync=lambda: None)
+            ok, msg, _ = flash.copy_bin(src, drive, opener=Breaking(20000), chunk=4096,
+                                        sync=lambda: None)
             self.assertFalse(ok)
             self.assertIn("copy failed after 16384 of 50000 bytes", msg)
-            ok, msg = flash.copy_bin(src, os.path.join(d, "gone"), sync=lambda: None)
+            ok, msg, _ = flash.copy_bin(src, os.path.join(d, "gone"), sync=lambda: None)
             self.assertFalse(ok)
+            # all bytes handed over, fsync fails (the drive went away): a warning
+            ok, msg, warn = flash.copy_bin(src, drive, opener=FsyncFails(), sync=lambda: None)
+            self.assertTrue(ok)
+            self.assertIn("fsync", warn)
+
+
+class FsyncFails:
+    """A real file whose fsync fails (Linux reports a vanished drive there)."""
+
+    def __call__(self, path, mode):
+        self.f = open(path, mode)
+        return self
+
+    def write(self, b):
+        return self.f.write(b)
+
+    def flush(self):
+        self.f.flush()
+
+    def fileno(self):
+        return 2 ** 20   # not an open fd: os.fsync raises OSError (EBADF)
+
+    def close(self):
+        self.f.close()
 
 
 # ---- flash, verify, capture with a fake board on a pty ----
@@ -426,7 +487,9 @@ class FakeBoard(threading.Thread):
                         time.sleep(0.05)
                 item = self.plan.pop(0) if self.plan else None
                 self.last = None
-                if item is not None:
+                if item == "UNPLUG":   # USB pulled right after the copy
+                    self.port.unplug()
+                elif item is not None:
                     with open(item, "rb") as f:
                         data = f.read()
                     data = BOOT_RE.sub(lambda m: m.group(1) + (self.rewrite or sha), data)
@@ -549,10 +612,24 @@ class TestFlashVerifyCapture(unittest.TestCase):
         runs = self.rows("SELECT * FROM runs")
         self.assertEqual([(r["commit"], r["verdict"], r["triage"]) for r in runs],
                          [(None, "NO_OUTPUT", "UNKNOWN")])
+        self.settle(4.0)   # no SILENT on top: the RUN_FAIL already says it
         inc = self.rows("SELECT * FROM incidents")
         self.assertEqual([(i["kind"], i["route"], i["firmware"]) for i in inc],
                          [("RUN_FAIL", "Triage", None)])
+        self.assertEqual(len(self.rows("SELECT * FROM alerts")), 1)
         self.assertEqual(self.rows("SELECT * FROM pass_history"), [])
+
+    def test_usb_pulled_after_copy_is_flash_error_not_no_output(self):
+        self.board([GOOD, "UNPLUG"])
+        self.flash(self.good)
+        self.flash(self.second)
+        runs = self.rows("SELECT * FROM runs ORDER BY run_id")
+        self.assertEqual([(r["commit"], r["verdict"], r["triage"]) for r in runs],
+                         [(self.good, "PASS", "NONE"), (None, "FLASH_ERROR", "UNKNOWN")])
+        self.assertIn("port was gone", json.loads(runs[1]["evidence"])["why"])
+        self.assertEqual(self.rows("SELECT kind FROM incidents"), [])
+        self.assertEqual([r["sha"] for r in self.rows("SELECT * FROM pass_history")],
+                         [self.good])
 
     def test_unreadable_bytes_are_garbled(self):
         self.assertIsNotNone(NOISE, "no recording of unreadable bytes")
@@ -660,6 +737,40 @@ class TestCaptureMachine(unittest.TestCase):
         self.assertEqual((r["commit"], r["verdict"], r["triage"]), ("abcdef1", "NO_OUTPUT",
                                                                     "UNKNOWN"))
 
+    def test_boot_before_the_copy_ends_never_verifies(self):
+        boot = "LW BOOT fw=abcdef1 reset=PIN csr=0x04000000"
+        self.bench.begin_flash("abcdef1", "s", None, t=1.0)
+        self.line(1.5, boot)                     # copy still running
+        self.bench.flash_copied("ok", t=3.0, window=15.0)
+        self.line(2.9, boot)                     # stamped before the copy ended
+        self.assertEqual(self.conn.execute("SELECT COUNT(*) FROM events WHERE kind='BOOT'")
+                         .fetchone()[0], 0)
+        self.assertIsNotNone(self.bench.m.expect)
+        self.assertEqual(self.bench.m.expect["discarded"], 2)  # both discarded, none stored
+        self.line(3.2, boot)
+        self.line(3.3, "LW RESULT PASS")
+        r = dict(self.conn.execute("SELECT * FROM runs").fetchone())
+        self.assertEqual((r["commit"], r["verdict"]), ("abcdef1", "PASS"))
+
+    def test_flash_failed_aborts_an_active_run(self):
+        self.bench.expect_flash("abcdef1", t=1.0)          # by hand: copied when armed
+        self.line(1.5, "LW BOOT fw=abcdef1 reset=PIN csr=0x04000000")
+        self.assertIsNotNone(self.bench.m.run)
+        self.bench.flash_failed("copy failed", t=2.0)
+        self.assertIsNone(self.bench.m.run)
+        runs = [tuple(r) for r in self.conn.execute("SELECT verdict, \"commit\" FROM runs")]
+        self.assertEqual(runs, [("FLASH_ERROR", None)])
+        self.assertEqual(self.conn.execute("SELECT COUNT(*) FROM pass_history").fetchone()[0], 0)
+
+    def test_silence_after_a_copy_warning_is_flash_error(self):
+        self.bench.begin_flash("abcdef1", "s", None, t=1.0)
+        self.bench.flash_copied("ok", t=2.0, window=15.0, copy_error="fsync: Input/output error")
+        self.bench.tick(17.1)
+        r = dict(self.conn.execute("SELECT * FROM runs").fetchone())
+        self.assertEqual((r["verdict"], r["triage"]), ("FLASH_ERROR", "UNKNOWN"))
+        self.assertIn("fsync", json.loads(r["evidence"])["why"])
+        self.assertEqual(self.conn.execute("SELECT COUNT(*) FROM incidents").fetchone()[0], 0)
+
     def test_link_drop_during_flash_opens_nothing(self):
         self.bench.begin_flash("abcdef1", "s", None, t=1.0)
         self.bench.apply(self.bench.m.link_down(1.5), 1.5)
@@ -686,13 +797,19 @@ class TestCaptureMachine(unittest.TestCase):
 @unittest.skipUnless(os.path.isdir(os.path.join(FW_PUBLIC, ".git")), "no ../fw-public clone")
 class TestRealFirmwareBuild(unittest.TestCase):
     def test_build_main(self):
-        """git archive of ../fw-public main into a temp dir, then make (sources unread)."""
+        """git archive of ../fw-public main into a temp dir, then make (sources unread).
+
+        Only git archive and make touch ../fw-public, so this does not go
+        through flash.build (which also reads the commit subject)."""
         with tempfile.TemporaryDirectory() as d:
-            main = git(FW_PUBLIC, "rev-parse", "refs/heads/main")
-            b = flash.build(FW_PUBLIC, main, d)
-            self.assertTrue(b["ok"], b)
-            self.assertGreater(os.path.getsize(b["bin"]), 0)
-            self.assertTrue(os.path.isfile(os.path.join(d, "elf", "%s.elf" % main[:7])))
+            tar = subprocess.run(["git", "-C", FW_PUBLIC, "archive", "--format=tar", "main"],
+                                 stdout=subprocess.PIPE, check=True).stdout
+            flash._extract(tar, d)
+            p = subprocess.run(["make", "-C", d, "FW_VERSION=abc1234"], stdout=subprocess.PIPE,
+                               stderr=subprocess.STDOUT, timeout=300)
+            self.assertEqual(p.returncode, 0, p.stdout[-2000:])
+            self.assertGreater(os.path.getsize(os.path.join(d, "build", "fw.bin")), 0)
+            self.assertTrue(os.path.isfile(os.path.join(d, "build", "fw.elf")))
 
 
 if __name__ == "__main__":

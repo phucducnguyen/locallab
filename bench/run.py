@@ -214,10 +214,10 @@ class Bench:
         self._flash = {"sha": sha, "subject": subject, "elf": elf}
         self.expect_flash(sha, window, t, how="usb", copied=False)
 
-    def flash_copied(self, msg="", t=None, window=FLASH_WINDOW_S):
+    def flash_copied(self, msg="", t=None, window=FLASH_WINDOW_S, copy_error=None):
         """The copy finished and synced: LW BOOT fw=<sha> is due within window."""
         t = time.time() if t is None else t
-        self.apply(self.m.flash_copied(t, window), t)
+        self.apply(self.m.flash_copied(t, window, copy_error), t)
         self.log("bench: copy done (%s); LW BOOT fw=%s due within %.0f s" % (
             msg, self.m.expect["sha"] if self.m.expect else "?", window))
 
@@ -267,9 +267,7 @@ class Bench:
 
     def line(self, t, raw_ts, records):
         for rec in records:
-            exp = self.m.expect
-            if exp is not None and not (rec.get("kind") == "BOOT"
-                                        and sha_match(rec.get("fw"), exp["sha"])):
+            if self.m.expect is not None and not self.m.verifies(t, rec):
                 self.m.record(t, rec, None)  # discarded: counted, not stored
                 continue
             fields = {k: v for k, v in rec.items()}
@@ -619,15 +617,13 @@ def main(argv=None):
     if a.flash and a.expect_flash:
         print("bench: --flash and --expect-flash exclude each other", file=sys.stderr)
         return 2
-    repo = None
-    if a.flash:
-        from bench import check_bench_repo
-        repo = check_bench_repo.repo_path(a.repo)
-        problems = check_bench_repo.check(repo)
-        if problems:
-            for p in problems:
-                print("bench: refusing to start, bench repo: %s" % p, file=sys.stderr)
-            return 2
+    from bench import check_bench_repo
+    repo = check_bench_repo.repo_path(a.repo)
+    problems = check_bench_repo.check(repo)
+    if problems:
+        for p in problems:
+            print("bench: refusing to start, bench repo: %s" % p, file=sys.stderr)
+        return 2
 
     from bench import flash as flashmod
     from bench.serial_owner import SerialOwner

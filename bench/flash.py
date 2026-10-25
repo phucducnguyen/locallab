@@ -39,6 +39,8 @@ import tarfile
 import threading
 import time
 
+from bench.check_bench_repo import tree_is_clean  # noqa: F401  (the per-sha guard)
+
 SHA_RE = re.compile(r"[0-9a-f]{7,40}")
 LABELS = ("NODE_F446RE", "NOD_F446RE")
 BY_LABEL = "/dev/disk/by-label"
@@ -120,6 +122,15 @@ def build(repo, sha, state_dir, toolchain=None, make="make", timeout=BUILD_TIMEO
         res["bench_fault"] = True
         return res
     res.update(sha=short, full=full, subject=subject)
+    try:
+        clean, why = tree_is_clean(repo, full)
+    except Exception as e:  # never build an unchecked tree
+        clean, why = False, "tree check failed: %s" % e.__class__.__name__
+    if not clean:
+        res["why"] = printable(why)
+        res["bench_fault"] = True
+        res["refused_tree"] = True
+        return res
     root = os.path.join(state_dir, "build", short)
     elf_dir = os.path.join(state_dir, "elf")
     try:
@@ -325,19 +336,23 @@ class Drive:
 
 
 def copy_bin(src, drive_dir, opener=open, chunk=CHUNK, sync=os.sync):
-    """Copy src to drive_dir/fw.bin. (ok, message). ok means every byte was written."""
+    """Copy src to drive_dir/fw.bin: (ok, message, warning).
+
+    ok means every byte was written. warning is set when fsync or close then
+    failed: on Linux a vanished drive often shows only there, so the bench
+    treats silence after such a copy as FLASH_ERROR (a BOOT still verifies)."""
     dest = os.path.join(drive_dir, "fw.bin")
     try:
         with open(src, "rb") as f:
             data = f.read()
     except OSError as e:
-        return False, "cannot read %s: %s" % (src, e.strerror or e)
+        return False, "cannot read %s: %s" % (src, e.strerror or e), None
     written = 0
     note = ""
     try:
         f = opener(dest, "wb")
     except OSError as e:
-        return False, "cannot open %s: %s" % (dest, e.strerror or e)
+        return False, "cannot open %s: %s" % (dest, e.strerror or e), None
     try:
         try:
             while written < len(data):
@@ -346,12 +361,13 @@ def copy_bin(src, drive_dir, opener=open, chunk=CHUNK, sync=os.sync):
             f.flush()
         except OSError as e:
             return False, "copy failed after %d of %d bytes: %s" % (
-                written, len(data), e.strerror or errno.errorcode.get(e.errno, e))
+                written, len(data), e.strerror or errno.errorcode.get(e.errno, e)), None
         try:
             os.fsync(f.fileno())
         except (OSError, AttributeError, ValueError) as e:
             # Every byte was handed over; the board may already be resetting.
-            note = "; fsync: %s" % (getattr(e, "strerror", None) or e.__class__.__name__)
+            if isinstance(e, OSError):
+                note = "; fsync: %s" % (e.strerror or e.__class__.__name__)
     finally:
         try:
             f.close()
@@ -361,7 +377,7 @@ def copy_bin(src, drive_dir, opener=open, chunk=CHUNK, sync=os.sync):
         sync()
     except OSError:
         pass
-    return True, "copied %d bytes to %s%s" % (written, dest, note)
+    return True, "copied %d bytes to %s%s" % (written, dest, note), note.lstrip("; ") or None
 
 
 class FlashJob:
@@ -415,15 +431,15 @@ class FlashJob:
             self.log("flash: FLASH_ERROR %s" % why)
             self.call(self.bench.flash_failed, why)
             return ("FLASH_ERROR", why)
-        ok, msg = copy_bin(b["bin"], mp, opener=self.opener, sync=self.sync)
+        ok, msg, warn = copy_bin(b["bin"], mp, opener=self.opener, sync=self.sync)
+        t_copied = time.time()
         self.log("flash: %s" % msg)
         if not ok:
             self.call(self.bench.flash_failed, msg)
             return ("FLASH_ERROR", msg)
-        if self.window is None:
-            self.call(self.bench.flash_copied, msg)
-        else:
-            self.call(self.bench.flash_copied, msg, None, self.window)
+        from bench.incidents import FLASH_WINDOW_S
+        self.call(self.bench.flash_copied, msg, t_copied,
+                  FLASH_WINDOW_S if self.window is None else self.window, warn)
         return ("COPIED", msg)
 
     def start(self):

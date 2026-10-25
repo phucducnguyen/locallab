@@ -8,7 +8,11 @@ answer key"). This check reads git metadata only, never file contents:
 - `git for-each-ref`: refs/heads/main must be the only ref (no tags, no
   remotes, no other branches, no stash);
 - `git symbolic-ref HEAD`: HEAD is refs/heads/main;
-- `git ls-tree --name-only HEAD`: CASES.md, logs and bugs are absent.
+- `git ls-tree -r --name-only HEAD`: no path component is CASES.md, logs or
+  bugs (any case). main keeps its history, so older commits still hold them:
+  tree_is_clean(repo, sha) is the per-sha guard that build() (and later the
+  endpoint's POST /run) applies before anything is exported. Names are only
+  compared, never printed.
 
 It never looks at ~/fw. Exit 0 when the repo passes, 1 otherwise.
 """
@@ -37,6 +41,22 @@ def _git(repo, *args):
 def _printable(s, cap=80):
     s = "".join(c if " " <= c < "\x7f" else "?" for c in s)
     return s if len(s) <= cap else s[:cap - 3] + "..."
+
+
+def tree_is_clean(repo, sha):
+    """(ok, why): sha's tree has no CASES.md, logs or bugs at any depth, any case."""
+    try:
+        rc, names = _git(repo, "ls-tree", "-r", "--name-only", "--end-of-options", sha)
+    except (OSError, subprocess.TimeoutExpired) as e:
+        return False, "git ls-tree could not run: %s" % e.__class__.__name__
+    if rc != 0:
+        return False, "git ls-tree %s failed" % _printable(sha, 40)
+    bad = set(n.lower() for n in FORBIDDEN)
+    for path in names.splitlines():
+        if any(part.lower() in bad for part in path.split("/")):
+            return False, ("the tree of %s holds answer-key paths (CASES.md, logs or bugs); "
+                           "the bench never builds it" % _printable(sha, 40))
+    return True, ""
 
 
 def check(repo=None):
@@ -69,6 +89,10 @@ def check(repo=None):
             present = [n for n in names.splitlines() if n in FORBIDDEN]
             if present:
                 problems.append("HEAD still has %s (remove them in a commit)" % ", ".join(present))
+            else:
+                ok, why = tree_is_clean(repo, "HEAD")
+                if not ok:
+                    problems.append("HEAD: %s" % why)
         return problems
     except (OSError, subprocess.TimeoutExpired) as e:
         return ["git could not run in %s: %s" % (repo, e.__class__.__name__)]

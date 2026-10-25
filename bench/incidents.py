@@ -226,13 +226,17 @@ class Machine:
         out.append({"type": "log", "what": "FLASH_EXPECT", "t": t, "sha": sha})
         return out
 
-    def flash_copied(self, t, window=FLASH_WINDOW_S):
-        """The copy finished: the BOOT window starts now; earlier bytes are stale."""
+    def flash_copied(self, t, window=FLASH_WINDOW_S, copy_error=None):
+        """The copy finished: the BOOT window starts now; earlier bytes are stale.
+
+        copy_error: every byte was written but fsync/close failed (the drive may
+        be gone); then silence in the window is FLASH_ERROR, not NO_OUTPUT.
+        """
         if self.expect is None:
             return []
         e = self.expect
         e.update(copied=True, t_copied=t, deadline=t + window, late=0, bytes=0, bad_bytes=0,
-                 nonlw=0, other_boot=None)
+                 nonlw=0, other_boot=None, copy_error=copy_error)
         return [{"type": "log", "what": "FLASH_COPIED", "t": t, "sha": e["sha"]}]
 
     def _unverified_run(self, t, sha, verdict, t_start, **extra):
@@ -243,12 +247,23 @@ class Machine:
 
     def flash_failed(self, t, why, verdict="FLASH_ERROR", sha=None):
         """The flash (or the build) failed: a run that never ran, never a pass."""
+        out = []
+        if self.run is not None:
+            run = self._end_run(t, "ABORTED")
+            out.append({"type": "log", "what": "RUN_ABORTED", "t": t, "sha": run["sha"]})
         e, self.expect = self.expect, None
         self.last_lw_t = t
         sha = sha or (e["sha"] if e else None)
         run = self._unverified_run(t, sha, verdict, e["t"] if e else t,
                                    discarded=e["discarded"] if e else 0, why=why)
-        return [{"type": "run_end", "run": run, "t": t}]
+        return out + [{"type": "run_end", "run": run, "t": t}]
+
+    def verifies(self, t, rec):
+        """This record is LW BOOT fw=<the flashed sha>, at or after the copy's end."""
+        e = self.expect
+        return bool(e is not None and rec.get("kind") == "BOOT"
+                    and sha_match(rec.get("fw"), e["sha"]) and e["copied"]
+                    and e["t_copied"] is not None and t >= e["t_copied"])
 
     def noise(self, t, nbytes, bad):
         """A non-LW line (nbytes long, bad unreadable bytes) while flashing."""
@@ -264,8 +279,14 @@ class Machine:
         facts = {"bytes": e["bytes"], "bad_bytes": e["bad_bytes"], "nonlw_lines": e["nonlw"],
                  "lw_after_copy": e["late"], "other_boot": e["other_boot"],
                  "window_s": round(t - (e["t_copied"] or e["t"]), 3)}
+        board_said = e["late"] == 0 and (e["bad_bytes"] >= GARBLED_MIN_BYTES or e["bytes"] == 0)
         if not e["copied"]:
             verdict, why = "FLASH_ERROR", "the copy did not finish in time"
+        elif board_said and e.get("copy_error"):
+            verdict, why = "FLASH_ERROR", "the copy reported %s and no LW BOOT arrived" % (
+                e["copy_error"])
+        elif board_said and not self.link:
+            verdict, why = "FLASH_ERROR", "the serial port was gone when the window closed"
         elif e["other_boot"]:
             verdict, why = "FLASH_ERROR", "the board booted fw=%s instead" % e["other_boot"]
         elif e["late"] == 0 and e["bad_bytes"] >= GARBLED_MIN_BYTES:
@@ -312,7 +333,7 @@ class Machine:
         kind = rec.get("kind")
         e = self.expect
         if e is not None:
-            if kind == "BOOT" and sha_match(rec.get("fw"), e["sha"]):
+            if self.verifies(t, rec):
                 return self._verified_boot(t, rec, cite)
             e["discarded"] += 1
             if e["copied"]:
@@ -368,7 +389,10 @@ class Machine:
             if prev is None or prev.opened < self.down_since:
                 out += self._open(t, LINK_DOWN, None, t_first_bad=self.down_since,
                                   facts={"down_since": self.down_since})
-        if (self.link and self.expect is None and self.last_lw_t is not None
+        quiet_run = self.active.get(RUN_FAIL)
+        quiet_run = quiet_run is not None and quiet_run.facts.get("verdict") in (
+            "NO_OUTPUT", "GARBLED")  # that incident already says the board is quiet
+        if (self.link and self.expect is None and self.last_lw_t is not None and not quiet_run
                 and t - self.last_lw_t >= self.silent_s and SILENT not in self.active):
             prev = self.recent.get(SILENT)
             if prev is None or prev.opened <= self.last_lw_t:
