@@ -2,21 +2,20 @@
 
 > This was the build-day contract between the parallel workstreams; the README is the overview.
 
-The decisions every lane builds against today. Written in the main checkout at 10:30. Everything
-here is PROPOSED until its Sunday check passes on the real board. To change it, a lane proposes the
-change in its stage report; main edits this file.
+The decisions the workstreams built against on the day, written at 10:30 and kept as the record of
+the interfaces.
 
 ## Repo layout
 
-| Path | Owner |
+| Path | What it is |
 | --- | --- |
-| `bench/` | lane A (serial, incidents, triage, flash, alerts, endpoint) |
-| `agent/` | lane B; the OpenClaw skill folder is `agent/skill/labwatch/` |
-| `tracker/` | lane C |
-| `fleet/` | lane E (QEMU emulated boards) |
-| `stub/` | main (the stand-in endpoint for B, C and D) |
-| `tests/test_<lane>_*.py` | each lane its own (`a`, `b`, `c`, `d`, `stub`) |
-| `docs/` | main: this file, `schema.sql`, the write-up and the demo script |
+| `bench/` | serial, incidents, triage, flash, alerts, endpoint, dashboard |
+| `agent/` | the explaining agent; the OpenClaw skill folder is `agent/skill/labwatch/` |
+| `tracker/` | Forgejo issues and the issue mirror |
+| `fleet/` | QEMU emulated boards |
+| `stub/` | a stand-in endpoint with invented records, for the tests |
+| `tests/test_*.py` | unit tests |
+| `docs/` | this file, `schema.sql`, the write-up and the demo script |
 
 Tests: `python3 -m unittest discover -s tests -t .` from the repo root. Python 3.12, standard
 library plus pyserial.
@@ -46,7 +45,7 @@ Any git command that creates a commit passes `-c user.name="Lab Watch bench"
 ## SQLite
 
 Every connection sets `PRAGMA journal_mode=WAL` and `PRAGMA busy_timeout=5000`. The shared tables
-are in `docs/schema.sql`: `incidents`, `runs`, `events`, `routing`, `alerts`. Lane A may add its own
+are in `docs/schema.sql`: `incidents`, `runs`, `events`, `routing`, `alerts`. The bench may add its own
 tables; nobody renames or drops these tables or their columns.
 
 Conventions in those tables:
@@ -63,7 +62,7 @@ Conventions in those tables:
 - `incidents.state` is `OPEN`, `FLAPPING` or `RESOLVED`. "Open" in `/incidents?open=1` means not
   `RESOLVED`.
 - `routing.route` is `Hardware team`, `Firmware team`, `Triage`, or NULL for NONE. A failed run
-  that opens an incident has one routing row with both `incident_id` and `run_id`. Lane C writes
+  that opens an incident has one routing row with both `incident_id` and `run_id`. The tracker writes
   its issue number into `routing.ticket` and `incidents.ticket`.
 - `alerts.transition` is one of those listed under "Alerts" below. Every non-open alert has `reply_to_alert_id` = the incident's `open` alert. `sent` stays NULL
   until Telegram accepts it; the sender sends only rows with `sent IS NULL`.
@@ -145,7 +144,7 @@ before each update is handled, so a restart never replays a command.
 | Kind | Opens on |
 | --- | --- |
 | `HEALTH_FAIL` | a jumper device or the supply; `evidence.device` is `loopback`, `sensor`, `radio` or `power` |
-| `ESTOP` | the blue button held (an operator action, triage NONE, nobody to call) |
+| `ESTOP` | the blue button held (an operator action, not a fault; triage HARDWARE, and the alert says "Not a fault") |
 | `HARDFAULT` | the board's crash line |
 | `RUN_FAIL` | a run of a new sha that does not pass |
 | `SILENT` | no LW lines for too long |
@@ -161,13 +160,13 @@ reopened with that comment.
 
 ## Explanation contract
 
-Lane B ships `python3 -m agent.explain --incident <id>` (or `--run <id>`). It asks the sandbox
+The agent ships `python3 -m agent.explain --incident <id>` (or `--run <id>`). It asks the sandbox
 agent in a fresh context and prints the explanation, ending with the DIAGNOSIS line, on stdout,
 exit 0. Exit 2 on timeout or when no DIAGNOSIS line came back. It never posts anything.
 
-Lane A's bench calls it after the first alert and posts the text through its own outbox (an
-`explain` alert row, `reply_to_alert_id` = the first alert). Lane D's scorer calls the same
-command.
+The bench calls it after the first alert and posts the text through its own outbox (an
+`explain` alert row, `reply_to_alert_id` = the first alert). The scored-run tooling would call
+the same command (not run on the day).
 
 ## Endpoint
 
@@ -187,7 +186,7 @@ The routes, auth and limits are the interface's. Shapes the stub fixes for B, C 
 ## Hold flag
 
 While the hold file exists (contents: holder and time), the endpoint's side-effect routes return
-429. Lane D creates it for the accuracy loop and removes it after.
+429. The scored run would create it and remove it after (not run on the day).
 
 ## Watcher
 
@@ -198,7 +197,7 @@ head.
 
     python3 stub/make_db.py --out /tmp/lw-stub.db
     python3 stub/serve.py --db /tmp/lw-stub.db --host 127.0.0.1 --port 8765 --token-file <file>
-    python3 stub/emit.py --db /tmp/lw-stub.db --scenario jumper|recover|flap|hardfault
+    python3 -m stub.emit --db /tmp/lw-stub.db --scenario jumper|recover|flap|hardfault
 
 All stub values are invented: shas 1111111 (last pass) and 2222222 (the new commit), `src/demo.c:42`,
 made-up registers. Canned incidents: 1 pulled jumper (HARDWARE, resolved), 2 flap (FLAPPING,
@@ -240,7 +239,7 @@ Now listed in full under "Alerts" above. Every non-open row replies to the incid
 | Bench DB | `~/.local/state/labwatch/bench.db` |
 | Hold file | `~/.local/state/labwatch/hold` |
 | bench token | `~/.config/labwatch/bench_token` (copied into the sandbox as `/sandbox/.config/labwatch/bench_token`) |
-| Explain | `LW_AGENT_CONFIG=~/lw/agent/agent.gb10.json python3 -m agent.explain --incident <id>` (18-46 s measured today; timeout 55 s) |
+| Explain | `LW_AGENT_CONFIG=~/lw/agent/agent.gb10.json python3 -m agent.explain --incident <id>` (reached Telegram 18-46 s after the first bad line today; timeout 55 s) |
 | NemoClaw | every `nemoclaw`/`openshell` call needs `NEMOCLAW_GATEWAY_PORT=8090` and `PATH=$HOME/.local/bin:$PATH` |
 | Model path | vLLM on 127.0.0.1:8000; user-level forwarders on 172.17.0.1:8000 and 172.18.0.1:8000 (tmux lw-fwd8000, lw-fwd8000b) |
 | Bench firmware | `~/bench-fw` main; baseline for the scored run: a0f0c9f |

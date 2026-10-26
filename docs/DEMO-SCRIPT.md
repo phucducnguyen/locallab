@@ -51,7 +51,7 @@ that it is a recording.
 - **Say, while it lands:** "The dashboard turns the sensor wire red. The bench decides with a
   fixed rule, not the model: this check passed on this same firmware, so it's hardware." When the
   alert lands, stop the timer and read it: "Board 1: the sensor wire came loose. Team: hardware.
-  Not a code problem." Read the first-alert time off the timer (today: 1.97-2.03 s for a pulled wire). The board photo follows as a reply, then the 🧠
+  Not a code problem." Read the first-alert time off the timer (today: 1.89-3.15 s for a pulled wire). The board photo follows as a reply, then the 🧠
   explanation: "It ends with a DIAGNOSIS line, and every claim behind it cites a serial line."
   Show the new issue labelled hardware.
 - **Live moment:** type `/ask <n>` in the group with the incident number from the alert. "Anyone
@@ -66,7 +66,7 @@ that it is a recording.
 - **On screen:** the shell pane of `lw-demo`, then the dashboard, Telegram, tracker.
 - **Type:**
   ```bash
-  git -C ~/bench-fw fetch -q ~/fw refs/remotes/origin/bug/hardfault && git -C ~/bench-fw -c user.name="LocalLab bench" -c user.email=lw@example.invalid cherry-pick FETCH_HEAD
+  git -C ~/bench-fw fetch -q ~/fw refs/remotes/origin/bug/hardfault && git -C ~/bench-fw -c user.name="Lab Watch bench" -c user.email=lw@example.invalid cherry-pick FETCH_HEAD
   ```
 - **Say:** "A teammate lands a commit. The bench's watcher flashes it, waits for the board to confirm the
   new sha, three self-tests pass, and then it crashes." When the alert lands: "Board 1: the new
@@ -100,8 +100,8 @@ that it is a recording.
 ### Beat 5: the number and the disclosure (2:20-2:40, 20 s)
 
 - **On screen:** the results sentence, then `git log --oneline` in the shell pane.
-- **Say:** "Measured today on the real board, the first alert came 0.78 to 2.03 seconds after the first bad
-  line, and the local explanation took 18 to 46 seconds." Then: "The test firmware is our own open-source
+- **Say:** "Measured today on the real board, the first alert came 0.78 to 3.89 seconds after the first bad
+  line, median 1.58, and the local explanation arrived 18 to 46 seconds after it." Then: "The test firmware is our own open-source
   repo, published before today. This repo started empty this morning, and every line in it was written today."
 - **Type:** `git -C ~/lw log --oneline | tail -5` (the repo is `~/lw` on the GB10).
 - **Fallback:** read the sentence from the slide.
@@ -117,8 +117,8 @@ That leaves about 20 s of slack inside the 3 minutes.
    stop button held ("someone pressed the stop button. Not a fault."), the RESET button, the USB
    cable pulled for 20 s. Say what the bench should conclude before it does. Grounding A1, A3 or A5
    is allowed only with that wire out.
-3. **The trial table (+30 s).** After beat 5's number: the per-trial table (`python3 -m bench.trial_log --since <unix time> --header`),
-   rule and agent side by side, "can't tell" counted separately and never as right.
+3. **The rehearsal table (+30 s).** After beat 5's number: `python3 -m bench.trial_log --since 0 --header`
+   (the source of results/board-round.tsv), rule and agent side by side.
 
 `/status` in the group can replace addition 2. The QEMU fleet of eight emulated boards was run
 separately as a scale test (see `results/README.md`); it is not part of the live demo. The fix beat (`python3 -m agent.fix --incident <n>`: the agent proposes a patch,
@@ -135,7 +135,7 @@ One clip per beat, recorded on the real setup, each a little shorter than its be
 - [ ] Clip 3: the cherry-pick, verified flash, three passes, HardFault, firmware issue with
       `file:line`, then the reset (50 s).
 - [ ] Clip 4: `nvidia-smi` and the `policy_denied` refusal (25 s).
-- [ ] Clip 5: the scoring sentence and `git log` (20 s).
+- [ ] Clip 5: the results sentence and `git log` (20 s).
 - [ ] Each clip plays from the laptop with no network; file names say the beat number.
 
 ## Pre-demo checklist

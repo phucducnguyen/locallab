@@ -101,10 +101,11 @@ Without a board, the stub stands in for the bench:
 Measured today on the real board (rehearsal incidents; data and method in
 [results/README.md](results/README.md)):
 
-- In the demo beats the first alert reached Telegram 0.78-2.03 s after the first bad serial line:
-  0.78 s for the stop button, 1.97-2.03 s for a pulled wire, 1.07 s for the HardFault. Over all 10
-  rehearsal incidents: 0.78-3.89 s, median 1.58 s, all under the 5 s target.
-- The local model's explanation took 18-46 s (9 of 10; one took 91 s, for a silent board).
+- The first alert reached Telegram 0.78-3.89 s after the first bad serial line over all 10
+  rehearsal incidents (median 1.58 s, all under the 5 s target): 0.78-1.01 s for the stop button,
+  1.89-3.15 s for a pulled wire, 1.07 s for the HardFault.
+- The local model's explanation reached Telegram 18-46 s after the first bad serial line (9 of 10;
+  one took 91 s, for a silent board).
 - In the HardFault beat the bench found `src/cmd.c:35`, and the explanation named the commit.
 - Eight emulated boards in QEMU ran next to the real one through the bench's own serial code for a
   10-minute soak: 0 anomalies, at about 1.35 CPU cores per board.

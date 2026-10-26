@@ -15,7 +15,7 @@ button pressed, the RESET button, and the HardFault demo commit.
 | Stop button (operator action) | 0.78 and 1.01 s |
 | Wire pulled (test, sensor, radio) | 1.89-3.15 s |
 | HardFault from a new commit | 1.07 s; the decode found `src/cmd.c:35`, and the explanation named the commit |
-| Explanation from the local model (Qwen3.6-35B-A3B on vLLM, in the sandbox) | 18-46 s for 9 of 10; one 91 s for a silent board |
+| Explanation from the local model (Qwen3.6-35B-A3B on vLLM, in the sandbox) | reached Telegram 18-46 s after the first bad line for 9 of 10; one 91 s for a silent board |
 
 The `diagnosis` column is the agent's own last line. The bench's rule, not the model, sets
 `triage`. Some HARDWARE answers name the firmware sha in COMMIT where the skill asks for `none`;
@@ -24,7 +24,7 @@ we report them as they are.
 ## Explanation simulator (`sim-old-skill.json`, `sim-frozen-skill.json`)
 
 `agent/sim_eval.py` runs invented incidents (no recordings, no real cases) through the same skill
-and model, and scores the replies automatically. Same cases, old skill vs the skill frozen at
+and model, and scores the replies automatically. Same invented cases (182 old, 181 frozen), old skill vs the skill frozen at
 `ebada0f` before any scored trial: label right 100% vs 100%; COMMIT field right 82.4% vs 98.9%;
 replies whose every citation resolves 13.7% vs 42.0%.
 

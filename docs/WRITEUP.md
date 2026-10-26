@@ -9,8 +9,7 @@ people or the firmware people, explains why with evidence, and files the ticket.
 
 ## The problem
 
-Hardware test benches fail silently or noisily. When a board test fails, teams lose time deciding
-whether it is the board or the latest code. On a shared test bench, a red result arrives with no context. Did a wire come loose or did a
+Hardware test benches fail silently or noisily. On a shared test bench, a red result arrives with no context. Did a wire come loose or did a
 commit break the build? The evidence is spread across three tools, and that first question decides
 who gets woken up.
 
@@ -96,11 +95,11 @@ the agent says it can't tell and names the one check that would.
 were frozen at main ebada0f for it, but we ran out of time on the day. The results below are what
 was measured.
 
-Measured today on the real board, the first alert reached Telegram 0.78-2.03 s after the first
-bad serial line in the demo beats: 0.78 s for the stop button, 1.97-2.03 s for a pulled wire, 1.07 s
-for the HardFault (over all 10 rehearsal incidents 0.78-3.89 s, median 1.58 s; see
-[results/README.md](../results/README.md)). The local model's explanation took 18-46 s for 9 of 10
-(one 91 s, for a silent board). In the HardFault beat the bench found `src/cmd.c:35`, and
+Measured today on the real board, the first alert reached Telegram 0.78-3.89 s after the first bad serial line over all 10 rehearsal incidents (median 1.58 s,
+all under the 5 s target): 0.78-1.01 s for the stop button, 1.89-3.15 s for a pulled wire, 1.07 s
+for the HardFault. See
+[results/README.md](../results/README.md). The local model's explanation reached Telegram 18-46 s
+after the first bad serial line for 9 of 10 (one 91 s, for a silent board). In the HardFault beat the bench found `src/cmd.c:35`, and
 the explanation named the commit.
 
 **Fleet.** Eight emulated boards in QEMU ran next to the real one through the bench's own serial
