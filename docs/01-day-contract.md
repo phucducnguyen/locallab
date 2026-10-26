@@ -103,6 +103,21 @@ A 🟡 first line ("Checking if it is the board or the code.") marks UNKNOWN tri
 | `ticket` | `tracker.mirror` | `Ticket #<n>: <url>`, once per incident |
 | `fix` | `tracker.fix` (`python3 -m agent.fix`) | the proposed fix's pull-request link (optional; not run live today) |
 
+### The dashboard's AI panel (`bench/dashboard.py`)
+
+Read-only. `/state.json` carries an `ai` block: the newest incident's phase (analysing or explained),
+live GB10 numbers polled about once a second in one thread (GPU % and watts from `nvidia-smi`,
+tokens/s from the delta of vLLM's `vllm:generation_tokens_total` at http://127.0.0.1:8000/metrics;
+env `LW_NVIDIA_SMI` and `LW_VLLM_METRICS` override), Rule vs AI (the incident's triage against the
+label parsed exactly from the DIAGNOSIS line), up to 4 citations parsed from the explanation, and
+the newest row of `asks.db`.
+
+### Telegram `/ask` history (`asks.db`)
+
+`bench/commands.py` stores each `/ask` in `asks.db` next to the bench DB (env `LW_ASKS_DB`):
+`asks(id, t_asked, question, incident_id, answer, t_answered, status)` with status asked, answered,
+timeout or failed. No user names, user ids or chat ids are stored.
+
 ### The board photo (`bench/snapshot.py`)
 
 A separate process polls the DB read-only for sent `open` alerts with no photo yet, waits 1.5 s so

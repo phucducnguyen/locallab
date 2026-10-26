@@ -45,6 +45,9 @@ that it is a recording.
 
 - **On screen:** camera on the A2-A3 sensor wire, the dashboard, Telegram, timer.
 - **Do:** pull the A2-A3 sensor wire and start the timer.
+- **Point at the violet AI panel** while it works: "This is the model working right now, on this
+  box: the timer, the GPU and the tokens per second are live." When the answer lands: "Rule vs AI:
+  the bench said hardware, the AI agrees."
 - **Say, while it lands:** "The dashboard turns the sensor wire red. The bench decides with a
   fixed rule, not the model: this check passed on this same firmware, so it's hardware." When the
   alert lands, stop the timer and read it: "Board 1: the sensor wire came loose. Team: hardware.

@@ -45,7 +45,14 @@ board, device and state. The same problem again adds a "happened again" comment 
 issue, and the issue closes when the board recovers.
 
 **A dashboard on the GB10 screen.** A full-screen page draws the board, its wires and button in
-green or red, with a plain headline and a timeline of the current incident.
+green or red, with a plain headline and a timeline of the current incident. An AI panel makes the
+model's work visible without faking it: while the agent explains an incident it shows a timer and
+live GB10 numbers (GPU use, watts, tokens per second, read from `nvidia-smi` and vLLM's own
+metrics), then the answer as it arrived; "Rule vs AI" puts the bench's verdict next to the agent's
+DIAGNOSIS and says plainly whether they agree or differ; "What the AI looked at" lists the serial
+lines it cited; and the latest Telegram `/ask` question and answer appear on screen. The footer
+says what is true: AI inference runs 100% on this GB10, no cloud AI calls, and the only outbound
+traffic is the Telegram alerts.
 
 **A proposed fix (optional, not run live).** `python3 -m agent.fix --incident <n>` asks the agent
 for a patch to a code fault; the host proves it on the board and opens a pull request for a human to

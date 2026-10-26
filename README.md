@@ -28,7 +28,14 @@ first question decides who gets called. LocalLab answers it in seconds, locally,
   `/ask <n>` and `/help`, read only from the team chat. Host code performs every action; the model
   only answers `/ask`.
 - **A dashboard** (`bench/dashboard.py`): a full-screen page on the GB10 monitor at
-  http://127.0.0.1:8770/, the board drawn green or red with a plain headline and a timeline.
+  http://127.0.0.1:8770/, the board drawn green or red with a plain headline and a timeline, and
+  an **AI panel** that shows the model at work: "Qwen3.6-35B-A3B is analysing incident #N on this
+  GB10" with a timer and live GB10 numbers (GPU %, watts and tokens/s, read from `nvidia-smi` and
+  vLLM's own `/metrics`), then the answer; **Rule vs AI** (the bench's verdict next to the agent's
+  DIAGNOSIS, marked "agrees" or "differs"); **what the AI looked at** (the serial lines it cited,
+  plus a count of citations that did not match a log line); and the latest Telegram `/ask`
+  question and answer (stored in `asks.db` by `bench/commands.py`). Its footer reads "AI
+  inference: 100% on this GB10 · No cloud AI calls · Only outbound traffic: Telegram alerts".
 
 ## Architecture
 
