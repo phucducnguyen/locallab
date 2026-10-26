@@ -138,6 +138,6 @@ were frozen at main ebada0f before any scored trial. More detail in [WRITEUP.md]
 
 ## Disclosure
 
-The test firmware is our own open-source repo, published before today. We prototyped the idea last week; none of that code is here. This repo started empty this morning, and every line in it was written today.
+The test firmware is our own open-source repo, published before today. This repo started empty this morning, and every line in it was written today.
 
 AI coding tools were used to write code today; none takes part at runtime.

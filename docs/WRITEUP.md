@@ -120,7 +120,7 @@ branch `day/health-dump` (github.com/phucducnguyen/nucleo-f446re-fault-demo).
 
 ## Disclosure
 
-The test firmware is our own open-source repo, published before today. We prototyped the idea last week; none of that code is here. This repo started empty this morning, and every line in it was written today.
+The test firmware is our own open-source repo, published before today. This repo started empty this morning, and every line in it was written today.
 
 AI coding tools were used to write code today; none takes part at runtime.
 
