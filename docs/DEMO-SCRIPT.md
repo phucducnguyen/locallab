@@ -122,8 +122,8 @@ That leaves about 20 s of slack inside the 3 minutes.
 3. **The trial table (+30 s).** After beat 5's number: the per-trial table (`python3 -m bench.trial_log --since <unix time> --header`),
    rule and agent side by side, "can't tell" counted separately and never as right.
 
-Any one of these can replace addition 2: `/status` in the group, or the QEMU fleet of eight
-emulated boards. The fix beat (`python3 -m agent.fix --incident <n>`: the agent proposes a patch,
+`/status` in the group can replace addition 2. The QEMU fleet of eight emulated boards was run
+separately as a scale test (see `results/README.md`); it is not part of the live demo. The fix beat (`python3 -m agent.fix --incident <n>`: the agent proposes a patch,
 the host proves it on the board and opens a pull request) exists but was not run live today; use
 it only after a rehearsal, and say it is optional.
 
