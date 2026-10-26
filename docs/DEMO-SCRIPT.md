@@ -101,8 +101,7 @@ that it is a recording.
 
 - **On screen:** the results sentence, then `git log --oneline` in the shell pane.
 - **Say:** "Measured today on the real board, the first alert came 0.78 to 2.03 seconds after the first bad
-  line, and the local explanation took 18 to 46 seconds. The scored six-trial results go in results/
-  after the run." Then: "The test firmware is our own open-source
+  line, and the local explanation took 18 to 46 seconds." Then: "The test firmware is our own open-source
   repo, published before today. This repo started empty this morning, and every line in it was written today."
 - **Type:** `git -C ~/lw log --oneline | tail -5` (the repo is `~/lw` on the GB10).
 - **Fallback:** read the sentence from the slide.

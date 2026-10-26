@@ -111,8 +111,10 @@ Measured today on the real board (rehearsal incidents; data and method in
 - Explanation simulator (invented incidents): the frozen skill took the COMMIT field from 82.4% to
   98.9% correct and fully resolving citations from 13.7% to 42.0%, label right on 100%.
 
-**Scored 6-trial run: results to be added in results/ after the run.** The agent's skill and prompt
-were frozen at main ebada0f before any scored trial. More detail in [WRITEUP.md](docs/WRITEUP.md).
+**Scored 6-trial run: not run.** The method and tooling are ready (faults the agent was never tuned
+on, graded against an answer sheet the build never saw), and the agent's skill and prompt were
+frozen at main ebada0f for it, but we ran out of time on the day; the numbers above are the
+measured results. More detail in [WRITEUP.md](docs/WRITEUP.md).
 
 ## Safety and limits
 

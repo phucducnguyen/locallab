@@ -92,8 +92,9 @@ the agent says it can't tell and names the one check that would.
 
 ## Results
 
-**Scored 6-trial run: results to be added in results/ after the run.** The agent's skill and prompt
-were frozen at main ebada0f before any scored trial.
+**Scored 6-trial run: not run.** The method and tooling are ready, and the agent's skill and prompt
+were frozen at main ebada0f for it, but we ran out of time on the day. The results below are what
+was measured.
 
 Measured today on the real board, the first alert reached Telegram 0.78-2.03 s after the first
 bad serial line in the demo beats: 0.78 s for the stop button, 1.97-2.03 s for a pulled wire, 1.07 s

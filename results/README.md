@@ -36,4 +36,5 @@ replies whose every citation resolves 13.7% vs 42.0%.
 ## Scored run
 
 The manual 6-trial scored run (faults the agent was never tuned on, graded against an answer
-sheet the build never saw) is added here as `trials-<start>.tsv` when it has been run.
+sheet the build never saw) was not run on the day. The tooling for it is ready, so this folder has
+no `trials-*.tsv` file.
