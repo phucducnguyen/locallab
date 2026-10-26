@@ -298,13 +298,3 @@ def fault_evidence(fields, elf, tool=None, runner=subprocess.run, root=None):
     return {"fault": d, "addr2line": a, "file_line": a["file_line"]}
 
 
-def fault_alert_line(evidence):
-    """'Fault: <summary>' for the first alert, or None when the evidence has no decode."""
-    try:
-        s = (evidence or {}).get("fault", {}).get("summary")
-    except AttributeError:
-        return None
-    if not s:
-        return None
-    fn = (evidence.get("addr2line") or {}).get("function")
-    return "Fault: %s%s" % (s, " in %s()" % fn if fn else "")

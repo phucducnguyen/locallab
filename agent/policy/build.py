@@ -28,7 +28,6 @@ import sys
 BRIDGE_HOST = "host.openshell.internal"
 DEFAULT_BRIDGE_IP = "172.18.0.1"
 BENCH_PORT = 8765
-INFERENCE_PORT = 8000
 PRESET_NAME = "labwatch-bench"
 HERE = os.path.dirname(os.path.abspath(__file__))
 YAML_PATH = os.path.join(HERE, "labwatch-bench.yaml")

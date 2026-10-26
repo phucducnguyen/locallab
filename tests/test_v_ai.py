@@ -8,7 +8,6 @@ import stat
 import threading
 import time
 import unittest
-import urllib.request
 
 from bench import dashboard
 from stub.db import Writer

@@ -18,10 +18,8 @@ import re
 
 TEXT_MAX = 3800   # Telegram allows 4096 characters per message
 LINE_MAX = 90     # the quoted board line
-REASON_MAX = 140
 EXPLAIN_LINE_MAX = 200
 UNAVAILABLE = "explanation unavailable; triage stands"
-LOOPBACK_PINS = "A0-A1"
 WIRE_NAMES = {"loopback": "test wire", "sensor": "sensor wire", "radio": "radio wire"}
 DEFAULT_PINS = {"loopback": "A0-A1", "sensor": "A2-A3", "radio": "A4-A5"}
 
@@ -73,39 +71,6 @@ def board_name(board):
     return "Board %s" % m.group(1) if m else (board or "The board")
 
 
-def _cap(s):
-    return s[:1].upper() + s[1:]
-
-
-def _link(name, pins, st):
-    """'sensor link OPEN (A2–A3 wire)' / 'radio link STUCK (A5 to ground)'."""
-    if st == "STUCK":
-        where = "%s to ground" % (pins or "?").split("-")[-1]
-    elif st == "OPEN":
-        where = "%s wire" % _pins(pins)
-    else:
-        where = _pins(pins)
-    return "%s %s (%s)" % (name, st or "?", where)
-
-
-def _fault_causes(ev):
-    """Cause names or CFSR bits from the decode summary, without the registers."""
-    s = ((ev.get("fault") or {}) if isinstance(ev.get("fault"), dict) else {}).get("summary")
-    if not s:
-        return None
-    parts = [p for p in s.split("; ") if not re.match(r"(pc|lr)=", p)]
-    fn = (ev.get("addr2line") or {}).get("function") if isinstance(
-        ev.get("addr2line"), dict) else None
-    return "; ".join(parts) + (" in %s()" % fn if fn else "")
-
-
-def hardfault_what(ev):
-    fl = ev.get("file_line")
-    head = "HardFault at %s" % fl if fl else "HardFault (no file:line)"
-    causes = _fault_causes(ev)
-    return head + (" · " + causes if causes else "")
-
-
 def _device(inc):
     """(device key or None, facts, evidence): loopback, sensor, radio, power, estop."""
     ev = _ev(inc)
@@ -122,45 +87,6 @@ def _state(dev, f):
     if dev == "loopback":
         return _last(f.get("loopback"))
     return f.get("state") or _last(f.get(dev))
-
-
-def device_what(inc):
-    """The technical what: device and state with pins, ESTOP, HardFault, run verdict."""
-    dev, f, ev = _device(inc)
-    kind = _get(inc, "kind")
-    if dev in WIRE_NAMES:
-        name = "loopback" if dev == "loopback" else "%s link" % dev
-        return _link(name, f.get("pins") or DEFAULT_PINS[dev], _state(dev, f))
-    if dev == "estop":
-        return "emergency stop pressed (operator action)"
-    if dev == "power":
-        if f.get("cause") == "BOR":
-            return "power brown-out reset (BOR)"
-        return "power low (vdd %s mV)" % (_last(f.get("vdd")) or "?")
-    if kind == "HARDFAULT":
-        return hardfault_what(ev)
-    if kind == "RUN_FAIL":
-        return "%s on %s" % (f.get("verdict") or "FAIL", _get(inc, "firmware") or "?")
-    return {"SILENT": "board silent", "REBOOT": "unexpected reboot",
-            "LINK_DOWN": "serial link down"}.get(kind, kind or "?")
-
-
-def device_tag(inc):
-    """A short technical name of what the incident is about, for resolve and flap."""
-    dev, f, ev = _device(inc)
-    kind = _get(inc, "kind")
-    if dev in WIRE_NAMES:
-        name = "loopback" if dev == "loopback" else "%s link" % dev
-        return "%s (%s)" % (name, _pins(f.get("pins") or DEFAULT_PINS[dev]))
-    if dev == "estop":
-        return "emergency stop"
-    if dev == "power":
-        return "power"
-    if kind == "HARDFAULT":
-        return "HardFault at %s" % ev["file_line"] if ev.get("file_line") else "HardFault"
-    if kind == "RUN_FAIL":
-        return "run %s" % (f.get("verdict") or "FAIL")
-    return kind or "?"
 
 
 def _thing(inc):

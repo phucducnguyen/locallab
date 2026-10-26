@@ -44,7 +44,7 @@ def write_private(path, text):
 
 
 def setup(fj, labels_path, log=print):
-    owner, name = fj.repo.split("/", 1)
+    _, name = fj.repo.split("/", 1)
     if fj.repo_exists():
         log("repo %s: exists" % fj.repo)
     else:

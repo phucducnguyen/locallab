@@ -1,8 +1,8 @@
-The agent Sunday checks: the test plan for the GB10 (B-agent.md "Sunday checks", every row)
+The agent Sunday checks: the test plan for the GB10
 
 Setup for every row, on the GB10:
     export PATH=$HOME/.local/bin:$PATH NEMOCLAW_GATEWAY_PORT=8090
-    cd ~/lw            # main, with lane B merged
+    cd ~/lw            # main
     S=labwatch
 Lock-down (once; safe to re-run):  agent/policy/apply.sh $S
 Explain config for the bench:       export LW_AGENT_CONFIG=~/lw/agent/agent.gb10.json

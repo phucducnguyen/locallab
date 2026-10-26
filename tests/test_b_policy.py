@@ -1,7 +1,6 @@
 """Lane B: the sandbox network policy preset (agent/policy/)."""
 
 import argparse
-import fnmatch
 import importlib.util
 import os
 import re
